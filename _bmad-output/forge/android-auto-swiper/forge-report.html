@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forge — Auto-swiper Android</title>
+<style>
+  :root { --bg:#f6f1e7; --ink:#2b2420; --muted:#6b5f55; --card:#fffaf1; --line:#d9cbb4; --seal:#9b1c1c; --ok:#1f6f43; --warn:#a15c00; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1b1714; --ink:#efe6d8; --muted:#b3a593; --card:#25201b; --line:#3d342c; --seal:#d04545; --ok:#5cc08a; --warn:#e3a14a; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.55 Georgia, "Times New Roman", serif; }
+  main { max-width:780px; margin:0 auto; padding:32px 16px 64px; }
+  header { display:flex; gap:24px; align-items:center; flex-wrap:wrap; border-bottom:2px solid var(--line); padding-bottom:20px; }
+  h1 { margin:0 0 4px; font-size:1.9rem; }
+  .sub { color:var(--muted); margin:0; }
+  h2 { font-size:1.15rem; margin:28px 0 10px; letter-spacing:.02em; text-transform:uppercase; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px 18px; }
+  ul { margin:0; padding-left:20px; }
+  li { margin:4px 0; }
+  .lock li::marker { content:"🔐 "; }
+  .kill li::marker { content:"✕  "; color:var(--seal); }
+  .crack li::marker { content:"⚠ "; color:var(--warn); }
+  .voices { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+  .voice b { display:block; }
+  .voice span { color:var(--muted); font-size:.92rem; }
+  footer { margin-top:36px; color:var(--muted); font-size:.85rem; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <svg width="130" height="130" viewBox="0 0 130 130" role="img" aria-label="Sceau HARDENED">
+      <defs><filter id="r"><feTurbulence baseFrequency="0.9" numOctaves="2"/><feDisplacementMap in="SourceGraphic" scale="3"/></filter></defs>
+      <g filter="url(#r)">
+        <circle cx="65" cy="65" r="60" fill="var(--seal)"/>
+        <circle cx="65" cy="65" r="48" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width="2" stroke-dasharray="4 3"/>
+      </g>
+      <text x="65" y="62" text-anchor="middle" fill="#fff" font-family="Georgia" font-weight="bold" font-size="17" letter-spacing="1">HARDENED</text>
+      <text x="65" y="82" text-anchor="middle" fill="#fff" fill-opacity=".85" font-family="Georgia" font-size="10">24 · 10 · 2026</text>
+    </svg>
+    <div>
+      <h1>Auto-swiper Android</h1>
+      <p class="sub">Forge Idea — tester puis améliorer. L'idée est assez précise pour être codée, avec un risque central non prouvé, assumé en connaissance de cause.</p>
+    </div>
+  </header>
+
+  <h2>L'idée</h2>
+  <div class="card">Une app Android qui swipe à droite ou à gauche dans les applis de rencontre, avec des gestes qui imitent un vrai doigt humain au lieu de simples taps.</div>
+
+  <h2>Décisions verrouillées</h2>
+  <div class="card"><ul class="lock">
+    <li>Android uniquement — Kotlin, AccessibilityService + <code>dispatchGesture</code>, APK installé à la main.</li>
+    <li>v1 pour un usage personnel.</li>
+    <li>Choix gauche/droite selon un ratio réglable (ex. 70 % à droite), sans lecture de l'écran.</li>
+    <li>Gestes humains : trajectoire courbe, vitesse variable, micro-variations.</li>
+    <li>Comportement humain : pauses irrégulières, sessions courtes, plafond par jour, ouverture d'un profil de temps en temps.</li>
+  </ul></div>
+
+  <h2>Rejeté</h2>
+  <div class="card"><ul class="kill">
+    <li><b>iOS</b> — une app ne peut pas toucher une autre app.</li>
+    <li><b>Play Store</b> — la politique sur l'Accessibility bloque ce type d'usage.</li>
+  </ul></div>
+
+  <h2>Points faibles qui ont survécu</h2>
+  <div class="card"><ul class="crack">
+    <li>L'idée que le geste « humain » évite la détection est une intuition, pas un fait vérifié.</li>
+    <li>La détection se fait probablement surtout côté serveur : ratio, rythme, temps par profil, zéro message.</li>
+    <li>N'importe quelle app peut lister les services d'accessibilité activés sur le téléphone.</li>
+    <li>Le risque de bannissement du compte ne tombe jamais à zéro.</li>
+  </ul></div>
+
+  <h2>Les voix de la session</h2>
+  <div class="voices">
+    <div class="card voice">📏 <b>Level — Claim Checker</b><span>« Sur quoi repose cette affirmation ? C'est une supposition, pas un fait établi. »</span></div>
+    <div class="card voice">🕵️ <b>Inès — ex-anti-fraude d'une app de rencontre</b><span>« Je ne vois pas la forme de votre geste. Je vois votre ratio, votre rythme et vos zéro messages. »</span></div>
+  </div>
+
+  <footer>Fichiers : forged-idea.md · .memlog.md — suite prévue : bmad-spec puis bmad-build.</footer>
+</main>
+</body>
+</html>

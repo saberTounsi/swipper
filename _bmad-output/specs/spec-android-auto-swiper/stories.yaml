@@ -1,0 +1,45 @@
+- id: "1"
+  title: Squelette du projet et service d'accessibilité
+  description: >-
+    Projet Kotlin/Compose minSdk 26 avec SwipeAccessibilityService déclaré,
+    onboarding vers les réglages d'accessibilité et état du service affiché en direct (CAP-1).
+  spec_checkpoint: true
+  done_checkpoint: true
+  invoke_dev_with: >-
+    Suivre architecture.md (packages, pas de permission INTERNET,
+    canRetrieveWindowContent=false). Le service ne fait encore aucun geste.
+- id: "2"
+  title: Générateur de gestes humains
+  description: >-
+    GestureGenerator en Kotlin pur produit un SwipePlan courbe, à vitesse en cloche
+    et paramètres variables, couvert par les tests de succès de CAP-2.
+  spec_checkpoint: true
+  invoke_dev_with: Random et dimensions d'écran injectés ; aucune dépendance Android.
+- id: "3"
+  title: Envoi des gestes sur l'écran
+  description: >-
+    GestureDispatcher exécute un SwipePlan segment par segment via dispatchGesture et
+    continueStroke ; un bouton de test lance un swipe réel (CAP-2).
+  done_checkpoint: true
+- id: "4"
+  title: Décision et moteur de comportement
+  description: >-
+    DirectionPicker (ratio) et BehaviorEngine (délais, sessions, plafond) en Kotlin pur,
+    testés avec horloge simulée (CAP-3, CAP-4).
+- id: "5"
+  title: Contrôle de l'automatisation
+  description: >-
+    AutomationController avec bouton flottant, notification, Stop instantané et pause
+    automatique hors app cible (CAP-5).
+  done_checkpoint: true
+- id: "6"
+  title: Réglages et compteur du jour
+  description: >-
+    SettingsRepository DataStore, écran de réglages et compteur remis à zéro à minuit (CAP-6).
+- id: "7"
+  title: Ouverture occasionnelle de profil
+  description: >-
+    Calibration de la position du tap « profil » par app et action d'ouverture de profil
+    dans le moteur de comportement (CAP-4).
+  spec_checkpoint: true
+  done_checkpoint: true
