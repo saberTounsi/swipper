@@ -71,6 +71,7 @@ context:
 - Comparaison sensible à la casse, comme `ComponentName.equals` (corrigé après le premier passage, qui l'ignorait).
 - L'aide « paramètres restreints » s'affiche sur tout Android 13+ quand le service est inactif : l'app ne peut pas savoir si l'interrupteur est réellement grisé.
 - Lignes 1 à 4 de la matrice (UI/appareil) : vérification manuelle sur téléphone (done_checkpoint) ; ligne 5 couverte par les tests unitaires. 11 tests, 0 échec ; APK debug produit.
+- Vérification sur émulateur (AVD `swipper35`, Pixel 7, Android 15, 2026-10-24) : lignes 1, 2, 4 et 5 de la matrice OK. Après désactivation externe, l'écran affiche « inactif » en ≤ 1 s, sans crash. Ligne 3 (paramètres restreints) non reproductible : l'installation par adb n'est pas soumise à ce blocage ; à vérifier sur un vrai téléphone avec un APK ouvert depuis un gestionnaire de fichiers.
 
 ## Spec Change Log
 
