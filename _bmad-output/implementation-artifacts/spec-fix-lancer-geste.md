@@ -62,6 +62,7 @@ context:
 - Gestes hésitants : u^1,6 étant appliqué avant E, leur pic se décale vers ~69–85 % du temps et le rapport levée/pic monte à ~0,9. Accepté : ils gardent un lancer à la levée.
 - Règle de zone : l'ancienne contrainte 0,18 ≤ xMin, xMax ≤ 0,82 est remplacée par xMin ≤ 0,62 et xMax ≥ 0,38 (tolérance 1e-6 pour les bornes Float). Les futurs réglages de zone (CAP-6) doivent valider contre cette règle. Les limites sont dérivées : 0,62 = RIGHT_BAND_MAX − MIN_TRAVEL, 0,38 = LEFT_BAND_MIN + MIN_TRAVEL.
 - Avec le biais vers la droite, une part des swipes RIGHT finit près de 97 % de la largeur (départ proche de 0,62, bande d'arrivée réduite). Noté ; non observable côté serveur.
+- Vérification téléphone (Redmi Note 12 Pro 5G, HyperOS 2.0, 2026-10-25) : après relance du service, swipe test ← sur Tinder → la carte part jusqu'au bout. Un premier essai a échoué parce que HyperOS avait tué le service (balayage dans les applis récentes, puis lowmemorykiller), sans rapport avec le geste.
 
 ## Spec Change Log
 

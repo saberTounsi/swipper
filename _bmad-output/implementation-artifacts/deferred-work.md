@@ -16,3 +16,6 @@
 - source_spec: `_bmad-output/specs/spec-android-auto-swiper/stories/3-envoi-des-gestes.md`
   summary: Pas de test automatique pour GestureDispatcher (construction des traits) ni pour testSwipe / « Service inactif ».
   evidence: Revue story 3 (#6). Code Android sans Robolectric ; vérifié manuellement sur émulateur pour le chemin connecté.
+- source_spec: `_bmad-output/implementation-artifacts/spec-fix-lancer-geste.md`
+  summary: Sur HyperOS, le service est tué (balayage dans les récents, lowmemorykiller) et Android le marque « planté » sans le relancer ; Swipper affiche pourtant « Service actif ». Les Toasts envoyés depuis l'arrière-plan sont aussi bloqués.
+  evidence: Logs du Redmi 2026-10-25 (SwipeUpClean, lowmemorykiller, « Crashed services », « Toast already killed »). À traiter en story 5 : état « connecté » publié par le service, notification de premier plan pour la session, guide Xiaomi (démarrage auto, batterie sans restriction, verrouillage dans les récents).
