@@ -7,3 +7,6 @@
 - source_spec: `_bmad-output/specs/spec-android-auto-swiper/stories/1-squelette-projet-service-accessibilite.md`
   summary: Pas de contrôle automatique garantissant l'absence de la permission INTERNET dans le manifeste fusionné.
   evidence: Revue story 1 (#14). Vérifié à la main avec aapt ; une dépendance future pourrait l'ajouter sans qu'aucune commande ne le détecte.
+- source_spec: `_bmad-output/specs/spec-android-auto-swiper/stories/2-generateur-gestes-humains.md`
+  summary: Le geste ralentit jusqu'à une vitesse quasi nulle à la fin ((1−cos πu)/2) ; une carte de Tinder pourrait revenir en place au lieu de partir.
+  evidence: Revue story 2 (#17), non vérifié. À observer lors du premier swipe réel (story 3) ; si la carte revient, terminer l'easing avec une vitesse résiduelle (ease-out partiel). Serait medium.
