@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Swipper</string>
+    <string name="accessibility_service_label">Swipper</string>
+    <string name="accessibility_service_description">Swipper effectue des gestes de balayage à votre place dans les applis de rencontre que vous choisissez. Il reçoit les événements de changement de fenêtre pour savoir quelle appli est au premier plan, et ignore le texte qu\'ils contiennent. Il ne peut pas lire le contenu de l\'écran et n\'envoie aucune donnée sur le réseau.</string>
+
+    <string name="status_active">Service actif</string>
+    <string name="status_inactive">Service inactif</string>
+    <string name="status_active_body">Le service d\'accessibilité de Swipper est activé.</string>
+    <string name="status_inactive_body">Pour que Swipper puisse balayer à votre place, activez son service d\'accessibilité : touchez « Activer », trouvez Swipper dans la liste, puis activez-le.</string>
+    <string name="action_enable">Activer</string>
+
+    <string name="restricted_title">Interrupteur grisé (« paramètre restreint ») ?</string>
+    <string name="restricted_body">Sur Android 13 et plus, une appli installée par APK est bloquée par défaut. Essayez d\'abord d\'activer Swipper (bouton « Activer ») : Android affiche « Paramètre restreint », fermez ce message. Ouvrez ensuite les infos de l\'appli, touchez le menu ⋮ en haut à droite, puis « Autoriser les paramètres restreints ». Revenez ensuite activer le service.</string>
+    <string name="action_open_app_info">Ouvrir les infos de l\'appli</string>
+</resources>
