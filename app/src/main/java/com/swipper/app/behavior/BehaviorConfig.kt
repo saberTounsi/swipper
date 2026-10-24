@@ -1,0 +1,66 @@
+package com.swipper.app.behavior
+
+/**
+ * Paramètres du moteur de comportement (CAP-4). Les valeurs par défaut sont celles
+ * de `architecture.md` ; toutes les durées sont en millisecondes.
+ *
+ * @property delayMedianMs médiane du délai log-normal entre deux swipes.
+ * @property delaySigma écart-type de ln(délai).
+ * @property delayMinMs borne basse du délai (hors distraction).
+ * @property delayMaxMs borne haute du délai (hors distraction).
+ * @property distractionProbability probabilité qu'une « distraction » remplace le délai.
+ * @property distractionMinMs durée minimale d'une distraction.
+ * @property distractionMaxMs durée maximale d'une distraction.
+ * @property sessionMin nombre minimal de swipes par session.
+ * @property sessionMax nombre maximal de swipes par session.
+ * @property restMinMs durée minimale de la pause longue entre deux sessions.
+ * @property restMaxMs durée maximale de la pause longue.
+ * @property dailyCap nombre maximal de swipes par jour local.
+ *
+ * @throws IllegalArgumentException si une valeur est ≤ 0, si un min dépasse son max,
+ *   si la probabilité n'est pas dans [0 ; 1] ou si la médiane sort de [delayMinMs ; delayMaxMs].
+ */
+data class BehaviorConfig(
+    val delayMedianMs: Long = 1_800,
+    val delaySigma: Double = 0.45,
+    val delayMinMs: Long = 800,
+    val delayMaxMs: Long = 8_000,
+    val distractionProbability: Double = 0.05,
+    val distractionMinMs: Long = 10_000,
+    val distractionMaxMs: Long = 40_000,
+    val sessionMin: Int = 25,
+    val sessionMax: Int = 60,
+    val restMinMs: Long = 15 * MINUTE_MS,
+    val restMaxMs: Long = 90 * MINUTE_MS,
+    val dailyCap: Int = 150,
+) {
+    init {
+        require(delayMedianMs > 0) { "delayMedianMs doit être > 0 (reçu $delayMedianMs)" }
+        require(delaySigma > 0.0 && delaySigma.isFinite()) { "delaySigma doit être > 0 et fini (reçu $delaySigma)" }
+        require(delayMinMs > 0) { "delayMinMs doit être > 0 (reçu $delayMinMs)" }
+        require(delayMaxMs > 0) { "delayMaxMs doit être > 0 (reçu $delayMaxMs)" }
+        require(delayMinMs <= delayMaxMs) { "delayMinMs ($delayMinMs) doit être ≤ delayMaxMs ($delayMaxMs)" }
+        require(delayMedianMs in delayMinMs..delayMaxMs) {
+            "delayMedianMs ($delayMedianMs) doit être dans [$delayMinMs ; $delayMaxMs]"
+        }
+        require(distractionProbability in 0.0..1.0) {
+            "distractionProbability doit être dans [0 ; 1] (reçu $distractionProbability)"
+        }
+        require(distractionMinMs > 0) { "distractionMinMs doit être > 0 (reçu $distractionMinMs)" }
+        require(distractionMaxMs > 0) { "distractionMaxMs doit être > 0 (reçu $distractionMaxMs)" }
+        require(distractionMinMs <= distractionMaxMs) {
+            "distractionMinMs ($distractionMinMs) doit être ≤ distractionMaxMs ($distractionMaxMs)"
+        }
+        require(sessionMin > 0) { "sessionMin doit être > 0 (reçu $sessionMin)" }
+        require(sessionMax > 0) { "sessionMax doit être > 0 (reçu $sessionMax)" }
+        require(sessionMin <= sessionMax) { "sessionMin ($sessionMin) doit être ≤ sessionMax ($sessionMax)" }
+        require(restMinMs > 0) { "restMinMs doit être > 0 (reçu $restMinMs)" }
+        require(restMaxMs > 0) { "restMaxMs doit être > 0 (reçu $restMaxMs)" }
+        require(restMinMs <= restMaxMs) { "restMinMs ($restMinMs) doit être ≤ restMaxMs ($restMaxMs)" }
+        require(dailyCap >= 1) { "dailyCap doit être ≥ 1 (reçu $dailyCap)" }
+    }
+
+    companion object {
+        internal const val MINUTE_MS = 60_000L
+    }
+}

@@ -19,3 +19,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-fix-lancer-geste.md`
   summary: Sur HyperOS, le service est tué (balayage dans les récents, lowmemorykiller) et Android le marque « planté » sans le relancer ; Swipper affiche pourtant « Service actif ». Les Toasts envoyés depuis l'arrière-plan sont aussi bloqués.
   evidence: Logs du Redmi 2026-10-25 (SwipeUpClean, lowmemorykiller, « Crashed services », « Toast already killed »). À traiter en story 5 : état « connecté » publié par le service, notification de premier plan pour la session, guide Xiaomi (démarrage auto, batterie sans restriction, verrouillage dans les récents).
+- source_spec: `_bmad-output/specs/spec-android-auto-swiper/stories/4-decision-et-comportement.md`
+  summary: Progression de session (sessionSwipes, sessionTarget) non persistée ; à ajouter à l'état sauvegardé en story 6.
+  evidence: Revue story 4 (#4). Après un redémarrage, une nouvelle session démarre sans la pause longue attendue.
+- source_spec: `_bmad-output/specs/spec-android-auto-swiper/stories/4-decision-et-comportement.md`
+  summary: Le moteur reprend chaque jour à minuit pile et peut swiper toute la nuit ; proposer une fenêtre d'activité réglable et un décalage aléatoire au réveil.
+  evidence: Revue story 4 (#6). Décision produit à soumettre à l'utilisateur (story 5 ou 6).
