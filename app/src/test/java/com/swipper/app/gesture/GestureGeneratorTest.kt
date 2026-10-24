@@ -5,6 +5,7 @@ import com.swipper.app.gesture.GestureGenerator.Companion.DRIFT_MIN
 import com.swipper.app.gesture.GestureGenerator.Companion.HESITANT_PROBABILITY
 import com.swipper.app.gesture.GestureGenerator.Companion.LEFT_BAND_MAX
 import com.swipper.app.gesture.GestureGenerator.Companion.LEFT_BAND_MIN
+import com.swipper.app.gesture.GestureGenerator.Companion.LEFT_START_MIN
 import com.swipper.app.gesture.GestureGenerator.Companion.JITTER_MAX_PX
 import com.swipper.app.gesture.GestureGenerator.Companion.JITTER_MIN_PX
 import com.swipper.app.gesture.GestureGenerator.Companion.MAX_INTERMEDIATE_POINTS
@@ -15,10 +16,14 @@ import com.swipper.app.gesture.GestureGenerator.Companion.MIN_SEGMENTS
 import com.swipper.app.gesture.GestureGenerator.Companion.MIN_SEGMENT_MS
 import com.swipper.app.gesture.GestureGenerator.Companion.MIN_TOTAL_MS
 import com.swipper.app.gesture.GestureGenerator.Companion.MIN_TRAVEL
+import com.swipper.app.gesture.GestureGenerator.Companion.PEAK_MAX
+import com.swipper.app.gesture.GestureGenerator.Companion.PEAK_MIN
+import com.swipper.app.gesture.GestureGenerator.Companion.RELEASE_MAX
+import com.swipper.app.gesture.GestureGenerator.Companion.RELEASE_MIN
 import com.swipper.app.gesture.GestureGenerator.Companion.RIGHT_BAND_MAX
 import com.swipper.app.gesture.GestureGenerator.Companion.RIGHT_BAND_MIN
-import com.swipper.app.gesture.GestureGenerator.Companion.ZONE_X_MAX_LIMIT
-import com.swipper.app.gesture.GestureGenerator.Companion.ZONE_X_MIN_LIMIT
+import com.swipper.app.gesture.GestureGenerator.Companion.RIGHT_START_MAX
+import com.swipper.app.gesture.GestureGenerator.Companion.ease
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -107,7 +112,9 @@ class GestureGeneratorTest {
     }
 
     @Test
-    fun `profil de vitesse - milieu plus rapide que les extremites`() {
+    fun `profil de vitesse - milieu plus rapide que le depart`() {
+        // Le profil « lancer » garde de la vitesse à la levée : seul le départ doit
+        // être plus lent que le milieu (la fin n'a plus à ralentir sous le milieu).
         val all = plans()
         assertTrue(all.isNotEmpty())
         for ((_, p) in all) {
@@ -116,7 +123,63 @@ class GestureGeneratorTest {
             assertTrue(middle.isNotEmpty())
             val mean = middle.average()
             assertTrue(mean > speeds.first(), "milieu $mean ≤ premier ${speeds.first()} (hésitant=${p.hesitant})")
-            assertTrue(mean > speeds.last(), "milieu $mean ≤ dernier ${speeds.last()} (hésitant=${p.hesitant})")
+        }
+    }
+
+    @Test
+    fun `lancer - vitesse conservee a la levee`() {
+        val all = plans()
+        assertTrue(all.isNotEmpty())
+        assertTrue(all.any { it.second.hesitant }, "aucun hésitant dans l'échantillon")
+        for ((_, p) in all) {
+            val speeds = p.segments.map(::speed)
+            val fastest = speeds.max()
+            assertTrue(
+                speeds.last() >= RELEASE_MIN * fastest,
+                "dernier ${speeds.last()} < $RELEASE_MIN × pic $fastest (hésitant=${p.hesitant})",
+            )
+            assertTrue(speeds.first() < fastest, "premier segment ${speeds.first()} = le plus rapide (hésitant=${p.hesitant})")
+        }
+    }
+
+    @Test
+    fun `lancer - pic et vitesse de levee tires par geste`() {
+        val normal = plans().map { it.second }.filter { !it.hesitant }
+        assertTrue(normal.isNotEmpty())
+        val ratios = normal.map { p ->
+            val speeds = p.segments.map(::speed)
+            val k = speeds.indices.maxBy { speeds[it] }
+            val total = p.totalDurationMs.toDouble()
+            val before = p.segments.take(k).sumOf { it.durationMs }
+            val mid = (before + p.segments[k].durationMs / 2.0) / total
+            val share = p.segments.maxOf { it.durationMs } / total
+            assertTrue(
+                mid >= PEAK_MIN - share && mid <= PEAK_MAX + share,
+                "segment le plus rapide centré en $mid hors [$PEAK_MIN ; $PEAK_MAX] ± $share",
+            )
+            speeds.last() / speeds[k]
+        }
+        assertTrue(ratios.max() - ratios.min() > 0.1, "rapport levée/pic peu varié : ${ratios.min()}..${ratios.max()}")
+    }
+
+    @Test
+    fun `lancer - fonction E monotone de 0 a 1 avec pic et vitesse de levee`() {
+        val steps = 1000
+        for (hesitant in listOf(false, true)) {
+            for (peak in listOf(PEAK_MIN, (PEAK_MIN + PEAK_MAX) / 2, PEAK_MAX)) {
+                for (release in listOf(RELEASE_MIN, RELEASE_MAX)) {
+                    assertEquals(0.0, ease(0.0, hesitant, peak, release), 1e-12)
+                    assertEquals(1.0, ease(1.0, hesitant, peak, release), 1e-12)
+                    val e = DoubleArray(steps + 1) { ease(it.toDouble() / steps, hesitant, peak, release) }
+                    val v = DoubleArray(steps) { e[it + 1] - e[it] }
+                    for (i in 0 until steps) assertTrue(v[i] >= 0.0, "E décroît en ${i.toDouble() / steps}")
+                    if (!hesitant) {
+                        val peakAt = v.indices.maxBy { v[it] }.toDouble() / steps
+                        assertEquals(peak, peakAt, 2.0 / steps, "pic mal placé")
+                        assertEquals(release, v.last() / v.max(), 0.01, "vitesse de levée")
+                    }
+                }
+            }
         }
     }
 
@@ -221,6 +284,7 @@ class GestureGeneratorTest {
             val dy = abs(p.end.y - p.start.y) / h
             assertTrue(dy >= DRIFT_MIN - eps && dy <= DRIFT_MAX + eps, "dérive $dy")
         }
+        assertEquals(0.35, MIN_TRAVEL)
         for (part in listOf(right, left)) {
             val distinct = part.map { it.second.end.x }.toSet().size
             assertTrue(distinct >= 100, "seulement $distinct arrivées distinctes")
@@ -228,13 +292,49 @@ class GestureGeneratorTest {
     }
 
     @Test
+    fun `depart selon le sens`() {
+        val w = phone.widthPx.toDouble()
+        val right = plans { Direction.RIGHT }.map { it.second }
+        val left = plans { Direction.LEFT }.map { it.second }
+        assertTrue(right.isNotEmpty() && left.isNotEmpty())
+        for (p in right) {
+            val fx = p.start.x / w
+            assertTrue(fx <= RIGHT_START_MAX + eps, "départ RIGHT $fx > $RIGHT_START_MAX")
+            assertTrue(fx >= zone.xMin - eps && fx <= zone.xMax + eps, "départ RIGHT hors zone : $fx")
+        }
+        for (p in left) {
+            val fx = p.start.x / w
+            assertTrue(fx >= LEFT_START_MIN - eps, "départ LEFT $fx < $LEFT_START_MIN")
+            assertTrue(fx >= zone.xMin - eps && fx <= zone.xMax + eps, "départ LEFT hors zone : $fx")
+        }
+    }
+
+    @Test
+    fun `duree totale`() {
+        assertEquals(180L, MIN_TOTAL_MS)
+        assertEquals(450L, MAX_TOTAL_MS)
+        val all = plans().map { it.second }
+        assertTrue(all.isNotEmpty())
+        for (p in all) assertTrue(p.totalDurationMs in MIN_TOTAL_MS..MAX_TOTAL_MS, "durée = ${p.totalDurationMs}")
+        val durations = all.map { it.totalDurationMs }
+        assertTrue(durations.min() < 250 && durations.max() > 400, "durées peu étalées : ${durations.min()}..${durations.max()}")
+    }
+
+    @Test
     fun `biais vers la droite`() {
         val all = plans()
         assertTrue(all.isNotEmpty())
-        val mean = all.map { (_, p) ->
-            (p.start.x / phone.widthPx - zone.xMin) / (zone.xMax - zone.xMin)
-        }.average()
-        assertTrue(mean > 0.5, "position moyenne du départ = $mean")
+        // Mesuré par sens, dans l'intervalle de départ réellement utilisé pour ce sens.
+        for (dir in Direction.values()) {
+            val (lo, hi) = when (dir) {
+                Direction.RIGHT -> zone.xMin.toDouble() to min(zone.xMax.toDouble(), RIGHT_START_MAX)
+                Direction.LEFT -> max(zone.xMin.toDouble(), LEFT_START_MIN) to zone.xMax.toDouble()
+            }
+            val part = all.filter { it.first == dir }
+            assertTrue(part.isNotEmpty())
+            val mean = part.map { (_, p) -> (p.start.x / phone.widthPx - lo) / (hi - lo) }.average()
+            assertTrue(mean > 0.5, "position moyenne du départ $dir = $mean")
+        }
     }
 
     @Test
@@ -281,17 +381,44 @@ class GestureGeneratorTest {
         assertThrows<IllegalArgumentException> { SwipeZone(0.3f, 0.5f, 0.7f, 0.6f) }
         assertThrows<IllegalArgumentException> { SwipeZone(Float.NaN, 0.5f, 0.4f, 0.6f) }
         assertThrows<IllegalArgumentException> { SwipeZone(0.3f, 0.5f, 0.4f, Float.NaN) }
-        val tooLeft = SwipeZone(ZONE_X_MIN_LIMIT - 0.01f, 0.5f, 0.4f, 0.6f)
-        val tooRight = SwipeZone(0.5f, ZONE_X_MAX_LIMIT + 0.01f, 0.4f, 0.6f)
-        assertThrows<IllegalArgumentException> { gen.plan(phone, tooLeft, Direction.RIGHT) }
-        assertThrows<IllegalArgumentException> { gen.plan(phone, tooRight, Direction.LEFT) }
+        // Zone trop à droite (xMin > 0,62) ou trop à gauche (xMax < 0,38) : un des deux
+        // sens serait impossible, la zone est refusée quel que soit le sens demandé.
+        val tooRight = SwipeZone(0.70f, 0.90f, 0.4f, 0.6f)
+        val tooLeft = SwipeZone(0.10f, 0.30f, 0.4f, 0.6f)
+        for (dir in Direction.values()) {
+            assertThrows<IllegalArgumentException> { gen.plan(phone, tooRight, dir) }
+            assertThrows<IllegalArgumentException> { gen.plan(phone, tooLeft, dir) }
+        }
         assertThrows<IllegalArgumentException> { gen.splitDuration(MIN_SEGMENT_MS * 3 - 1, 3) }
+    }
+
+    @Test
+    fun `zones aux limites 0,62 et 0,38`() {
+        val gen = GestureGenerator(Random(5))
+        val w = phone.widthPx.toDouble()
+        val atRightLimit = SwipeZone(0.62f, 1f, 0.4f, 0.6f)
+        val atLeftLimit = SwipeZone(0f, 0.38f, 0.4f, 0.6f)
+        for (z in listOf(atRightLimit, atLeftLimit)) {
+            for (dir in Direction.values()) {
+                repeat(50) {
+                    val p = gen.plan(phone, z, dir)
+                    val travel = (p.end.x - p.start.x) / w * (if (dir == Direction.RIGHT) 1 else -1)
+                    assertTrue(travel >= MIN_TRAVEL - eps, "trajet $travel ($dir, $z)")
+                }
+            }
+        }
+        for (dir in Direction.values()) {
+            assertThrows<IllegalArgumentException> { gen.plan(phone, SwipeZone(0.63f, 1f, 0.4f, 0.6f), dir) }
+            assertThrows<IllegalArgumentException> { gen.plan(phone, SwipeZone(0f, 0.37f, 0.4f, 0.6f), dir) }
+        }
     }
 
     @Test
     fun `zone limite et bords haut bas restent valides`() {
         val gen = GestureGenerator(Random(9))
-        val edge = SwipeZone(ZONE_X_MIN_LIMIT, ZONE_X_MAX_LIMIT, 0f, 1f)
+        // Toute la largeur est désormais acceptée : le départ est restreint selon le sens.
+        val edge = SwipeZone(0f, 1f, 0f, 1f)
+        val w = small.widthPx.toDouble()
         val h = small.heightPx.toDouble()
         var up = 0
         var down = 0
@@ -300,6 +427,8 @@ class GestureGeneratorTest {
             val dir = if (i % 2 == 0) Direction.RIGHT else Direction.LEFT
             val p = gen.plan(small, edge, dir)
             if (dir == Direction.RIGHT) assertTrue(p.end.x > p.start.x) else assertTrue(p.end.x < p.start.x)
+            val travel = abs(p.end.x - p.start.x) / w
+            assertTrue(travel >= MIN_TRAVEL - eps, "trajet $travel en zone limite")
             for (pt in allPoints(p)) {
                 assertTrue(pt.x in 0f..(small.widthPx - 1f) && pt.y in 0f..(small.heightPx - 1f), "hors écran : $pt")
             }

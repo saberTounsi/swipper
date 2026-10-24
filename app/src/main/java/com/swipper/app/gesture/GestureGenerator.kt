@@ -11,7 +11,8 @@ import kotlin.random.Random
 
 /**
  * Génère des swipes qui ressemblent à un doigt (CAP-2) : tracé en Bézier cubique,
- * accélération puis décélération, paramètres tirés à chaque geste.
+ * profil de « lancer » (départ lent, pic de vitesse, levée du doigt encore rapide),
+ * paramètres tirés à chaque geste.
  *
  * Kotlin pur : [random] et les dimensions sont injectés, donc à graine fixe le
  * résultat est reproductible. Ne décide pas du sens (story 4) et n'exécute rien
@@ -29,24 +30,30 @@ class GestureGenerator(private val random: Random) {
      * Produit un [SwipePlan] dans le sens [direction], avec un départ tiré dans
      * [zone] (fractions de [screen]).
      *
-     * @throws IllegalArgumentException si la zone a xMin < [ZONE_X_MIN_LIMIT] ou
-     *   xMax > [ZONE_X_MAX_LIMIT] : le trajet minimal de [MIN_TRAVEL] ne serait
-     *   pas garanti.
+     * @throws IllegalArgumentException si la zone a xMin > [RIGHT_START_MAX] ou
+     *   xMax < [LEFT_START_MIN] : un des deux sens ne pourrait pas garantir le
+     *   trajet minimal de [MIN_TRAVEL].
      */
     fun plan(screen: ScreenSize, zone: SwipeZone, direction: Direction): SwipePlan {
-        require(zone.xMin >= ZONE_X_MIN_LIMIT) {
-            "xMin de la zone (${zone.xMin}) doit être ≥ $ZONE_X_MIN_LIMIT pour garantir le trajet"
+        // Tolérance : les bornes Float (0,62f = 0,6200000048…) doivent passer à la limite exacte.
+        require(zone.xMin <= RIGHT_START_MAX + LIMIT_EPS) {
+            "xMin de la zone (${zone.xMin}) doit être ≤ $RIGHT_START_MAX pour garantir le trajet vers la droite"
         }
-        require(zone.xMax <= ZONE_X_MAX_LIMIT) {
-            "xMax de la zone (${zone.xMax}) doit être ≤ $ZONE_X_MAX_LIMIT pour garantir le trajet"
+        require(zone.xMax >= LEFT_START_MIN - LIMIT_EPS) {
+            "xMax de la zone (${zone.xMax}) doit être ≥ $LEFT_START_MIN pour garantir le trajet vers la gauche"
         }
         val w = screen.widthPx.toDouble()
         val h = screen.heightPx.toDouble()
         val maxX = max(0.0, w - 1)
         val maxY = max(0.0, h - 1)
 
-        // 1. Départ : biais vers la droite (u^0,8 a une moyenne > 0,5).
-        val sxFrac = zone.xMin + (zone.xMax - zone.xMin) * random.nextDouble().pow(RIGHT_BIAS_EXPONENT)
+        // 1. Départ : dans la zone ∩ [0 ; RIGHT_START_MAX] (RIGHT) ou ∩ [LEFT_START_MIN ; 1]
+        // (LEFT), pour garantir le trajet ; biais vers la droite (u^0,8 a une moyenne > 0,5).
+        val (xLo, xHi) = when (direction) {
+            Direction.RIGHT -> min(zone.xMin.toDouble(), RIGHT_START_MAX) to min(zone.xMax.toDouble(), RIGHT_START_MAX)
+            Direction.LEFT -> max(zone.xMin.toDouble(), LEFT_START_MIN) to max(zone.xMax.toDouble(), LEFT_START_MIN)
+        }
+        val sxFrac = xLo + (xHi - xLo) * random.nextDouble().pow(RIGHT_BIAS_EXPONENT)
         val syFrac = zone.yMin + (zone.yMax - zone.yMin) * random.nextDouble()
         val sx = (sxFrac * w).coerceIn(0.0, maxX)
         val sy = (syFrac * h).coerceIn(0.0, maxY)
@@ -101,12 +108,14 @@ class GestureGenerator(private val random: Random) {
         val n = random.nextInt(MIN_SEGMENTS, MAX_SEGMENTS + 1)
         val total = random.nextLong(MIN_TOTAL_MS, MAX_TOTAL_MS + 1)
         val hesitant = random.nextDouble() < HESITANT_PROBABILITY
+        val peak = uniform(PEAK_MIN, PEAK_MAX)
+        val release = uniform(RELEASE_MIN, RELEASE_MAX)
         val durations = splitDuration(total, n)
         val fractions = DoubleArray(n + 1)
         var cumulative = 0L
         for (i in 1 until n) {
             cumulative += durations[i - 1]
-            fractions[i] = ease(cumulative.toDouble() / total, hesitant)
+            fractions[i] = ease(cumulative.toDouble() / total, hesitant, peak, release)
         }
         fractions[n] = 1.0
 
@@ -223,20 +232,26 @@ class GestureGenerator(private val random: Random) {
         const val MIN_SEGMENTS = 6
         const val MAX_SEGMENTS = 10
         const val MIN_TOTAL_MS = 180L
-        const val MAX_TOTAL_MS = 600L
+        const val MAX_TOTAL_MS = 450L
         const val MIN_SEGMENT_MS = 16L
         const val HESITANT_PROBABILITY = 0.10
 
-        /** Bornes de la zone de départ qui garantissent le trajet minimal. */
-        const val ZONE_X_MIN_LIMIT = 0.18f
-        const val ZONE_X_MAX_LIMIT = 0.82f
-
         /** Trajet horizontal minimal, en fraction de la largeur. */
-        const val MIN_TRAVEL = 0.15
+        const val MIN_TRAVEL = 0.35
         const val RIGHT_BAND_MIN = 0.80
         const val RIGHT_BAND_MAX = 0.97
         const val LEFT_BAND_MIN = 0.03
         const val LEFT_BAND_MAX = 0.20
+
+        /**
+         * Départ maximal d'un swipe RIGHT et minimal d'un swipe LEFT (fractions de la
+         * largeur) : dérivés des bandes pour garantir le trajet de [MIN_TRAVEL].
+         */
+        const val RIGHT_START_MAX = RIGHT_BAND_MAX - MIN_TRAVEL
+        const val LEFT_START_MIN = LEFT_BAND_MIN + MIN_TRAVEL
+
+        /** Tolérance d'arrondi Float sur les limites de la zone. */
+        const val LIMIT_EPS = 1e-6
 
         /** Dérive verticale, en fraction de la hauteur. */
         const val DRIFT_MIN = 0.04
@@ -255,10 +270,31 @@ class GestureGenerator(private val random: Random) {
         const val HESITANT_EXPONENT = 1.6
         const val ARC_SAMPLES = 64
 
-        /** Easing sinusoïdal (1 − cos πu) / 2, précédé de u^1,6 pour un geste hésitant. */
-        fun ease(u: Double, hesitant: Boolean): Double {
-            val v = if (hesitant) u.pow(HESITANT_EXPONENT) else u
-            return (1 - cos(PI * v)) / 2
+        /** Position du pic de vitesse, en fraction du temps. */
+        const val PEAK_MIN = 0.55
+        const val PEAK_MAX = 0.75
+
+        /** Vitesse à la levée du doigt, en fraction de la vitesse du pic. */
+        const val RELEASE_MIN = 0.5
+        const val RELEASE_MAX = 0.8
+
+        /**
+         * Fraction de longueur parcourue au temps [u] ∈ [0 ; 1] avec le profil « lancer » :
+         * vitesse v(s) = sin(π/2 · s/[peak]) jusqu'au pic, puis baisse linéaire jusqu'à
+         * [release] à la levée. E(u) = ∫₀ᵘ v / ∫₀¹ v (intégrale analytique), monotone,
+         * E(0) = 0, E(1) = 1. Un geste hésitant applique u^1,6 avant (départ plus lent).
+         */
+        fun ease(u: Double, hesitant: Boolean, peak: Double, release: Double): Double {
+            val x = (if (hesitant) u.pow(HESITANT_EXPONENT) else u).coerceIn(0.0, 1.0)
+            val rise = 2 * peak / PI
+            val total = rise + (1 - peak) * (1 + release) / 2
+            val area = if (x <= peak) {
+                rise * (1 - cos(PI / 2 * x / peak))
+            } else {
+                val d = x - peak
+                rise + d - (1 - release) * d * d / (2 * (1 - peak))
+            }
+            return area / total
         }
 
         /**
