@@ -21,6 +21,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.swipper.app.R
+import com.swipper.app.gesture.Direction
 
 /** Écran d'accueil : état du service + onboarding d'activation (CAP-1). */
 @Composable
@@ -28,6 +29,7 @@ fun HomeScreen(
     serviceEnabled: Boolean,
     onEnableClick: () -> Unit,
     onOpenAppInfoClick: () -> Unit,
+    onTestSwipeClick: (Direction) -> Unit,
     modifier: Modifier = Modifier,
     showRestrictedHelp: Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU,
 ) {
@@ -60,6 +62,17 @@ fun HomeScreen(
             }
         }
 
+        if (serviceEnabled) {
+            Text(stringResource(R.string.test_title), style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.test_body), style = MaterialTheme.typography.bodyMedium)
+            OutlinedButton(onClick = { onTestSwipeClick(Direction.RIGHT) }, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.action_test_right))
+            }
+            OutlinedButton(onClick = { onTestSwipeClick(Direction.LEFT) }, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.action_test_left))
+            }
+        }
+
         if (!serviceEnabled) {
             Button(onClick = onEnableClick, modifier = Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.action_enable))
@@ -79,12 +92,12 @@ fun HomeScreen(
 @Composable
 private fun HomeScreenInactivePreview() {
     MaterialTheme {
-        HomeScreen(serviceEnabled = false, onEnableClick = {}, onOpenAppInfoClick = {}, showRestrictedHelp = true)
+        HomeScreen(serviceEnabled = false, onEnableClick = {}, onOpenAppInfoClick = {}, onTestSwipeClick = {}, showRestrictedHelp = true)
     }
 }
 
 @Preview(showBackground = true)
 @Composable
 private fun HomeScreenActivePreview() {
-    MaterialTheme { HomeScreen(serviceEnabled = true, onEnableClick = {}, onOpenAppInfoClick = {}) }
+    MaterialTheme { HomeScreen(serviceEnabled = true, onEnableClick = {}, onOpenAppInfoClick = {}, onTestSwipeClick = {}) }
 }

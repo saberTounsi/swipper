@@ -13,4 +13,16 @@
     <string name="restricted_title">Interrupteur grisé (« paramètre restreint ») ?</string>
     <string name="restricted_body">Sur Android 13 et plus, une appli installée par APK est bloquée par défaut. Essayez d\'abord d\'activer Swipper (bouton « Activer ») : Android affiche « Paramètre restreint », fermez ce message. Ouvrez ensuite les infos de l\'appli, touchez le menu ⋮ en haut à droite, puis « Autoriser les paramètres restreints ». Revenez ensuite activer le service.</string>
     <string name="action_open_app_info">Ouvrir les infos de l\'appli</string>
+
+    <string name="test_title">Swipe de test</string>
+    <string name="test_body">Touchez un bouton puis passez sur l\'appli cible : un seul swipe part 5 secondes plus tard.</string>
+    <string name="action_test_right">Swipe test → dans 5 s</string>
+    <string name="action_test_left">Swipe test ← dans 5 s</string>
+    <string name="toast_test_armed_right">Swipe → dans 5 s : passez sur l\'appli cible</string>
+    <string name="toast_test_armed_left">Swipe ← dans 5 s : passez sur l\'appli cible</string>
+    <string name="toast_service_inactive">Service inactif</string>
+    <string name="toast_test_result">Swipe test %1$s : %2$s</string>
+    <string name="test_result_completed">terminé</string>
+    <string name="test_result_cancelled">annulé par le système</string>
+    <string name="test_result_failed">refusé</string>
 </resources>

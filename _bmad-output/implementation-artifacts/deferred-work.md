@@ -10,3 +10,9 @@
 - source_spec: `_bmad-output/specs/spec-android-auto-swiper/stories/2-generateur-gestes-humains.md`
   summary: Le geste ralentit jusqu'à une vitesse quasi nulle à la fin ((1−cos πu)/2) ; une carte de Tinder pourrait revenir en place au lieu de partir.
   evidence: Revue story 2 (#17), non vérifié. À observer lors du premier swipe réel (story 3) ; si la carte revient, terminer l'easing avec une vitesse résiduelle (ease-out partiel). Serait medium.
+- source_spec: `_bmad-output/specs/spec-android-auto-swiper/stories/3-envoi-des-gestes.md`
+  summary: Fiabilité de l'exécution des gestes à reprendre avec la boucle automatique (story 5) : levée du doigt après un segment refusé, exception pendant l'envoi (pas de CoroutineExceptionHandler), levée envoyée pendant un segment en cours.
+  evidence: Revue story 3 (#1, #2, #11, #13), non vérifié sur appareil. Tester un Stop en plein swipe avec « Afficher les appuis » ; ajouter un gestionnaire d'exceptions au scope du service.
+- source_spec: `_bmad-output/specs/spec-android-auto-swiper/stories/3-envoi-des-gestes.md`
+  summary: Pas de test automatique pour GestureDispatcher (construction des traits) ni pour testSwipe / « Service inactif ».
+  evidence: Revue story 3 (#6). Code Android sans Robolectric ; vérifié manuellement sur émulateur pour le chemin connecté.
