@@ -25,3 +25,9 @@
 - source_spec: `_bmad-output/specs/spec-android-auto-swiper/stories/4-decision-et-comportement.md`
   summary: Le moteur reprend chaque jour à minuit pile et peut swiper toute la nuit ; proposer une fenêtre d'activité réglable et un décalage aléatoire au réveil.
   evidence: Revue story 4 (#6). Décision produit à soumettre à l'utilisateur (story 5 ou 6).
+- source_spec: none
+  summary: Plage horaire d'activité (9 h–23 h par défaut) et reprise à une heure aléatoire, dans BehaviorEngine.
+  evidence: Décision utilisateur du 2026-10-25 ; séparée de la story 5 (découpage choisi par l'utilisateur) — petit lot à faire juste après la story 5.
+- source_spec: none
+  summary: Guide des réglages Xiaomi/HyperOS dans l'app (démarrage auto, batterie sans restriction, verrouillage dans les récents).
+  evidence: Constats du 2026-10-25 sur le Redmi ; séparé de la story 5 par l'utilisateur — à faire avec la story 6 (réglages).
