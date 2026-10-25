@@ -104,8 +104,9 @@ class SwipeAccessibilityService : AccessibilityService() {
         val o = FloatingControls(this, c)
         overlay = o
         s.launch {
-            combine(c.state, c.swipesToday, c.userPaused) { st, count, paused -> Triple(st, count, paused) }
-                .collect { (st, count, paused) -> n.update(st, count, paused) }
+            combine(c.state, c.swipesToday, c.userPaused, c.resumeAt) { st, count, paused, resume ->
+                n.update(st, count, paused, resume, c.zone)
+            }.collect {}
         }
         s.launch {
             combine(foreground, c.state, c.userPaused) { pkg, st, paused -> Triple(pkg, st, paused) }
@@ -196,7 +197,7 @@ class SwipeAccessibilityService : AccessibilityService() {
     /** Republie la notification (par exemple après l'octroi de `POST_NOTIFICATIONS`). */
     fun refreshNotification() {
         val c = controller ?: return
-        notification?.update(c.state.value, c.swipesToday.value, c.userPaused.value)
+        notification?.update(c.state.value, c.swipesToday.value, c.userPaused.value, c.resumeAt.value, c.zone)
     }
 
     /**

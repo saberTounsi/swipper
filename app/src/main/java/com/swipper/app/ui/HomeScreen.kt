@@ -18,6 +18,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -25,6 +26,8 @@ import com.swipper.app.R
 import com.swipper.app.control.AutomationNotification
 import com.swipper.app.control.AutomationState
 import com.swipper.app.gesture.Direction
+import java.time.Instant
+import java.time.ZoneId
 
 /** État du service vu par l'utilisateur (CAP-1 et constat HyperOS). */
 enum class ServiceStatus {
@@ -52,6 +55,10 @@ data class LoopUi(
     val userPaused: Boolean = false,
     val swipesToday: Int = 0,
     val error: String? = null,
+    /** Échéance de l'attente en [AutomationState.OutsideHours] ou [AutomationState.CapReached]. */
+    val resumeAt: Instant? = null,
+    /** Fuseau de l'horloge de la boucle, pour afficher [resumeAt]. */
+    val zone: ZoneId = ZoneId.systemDefault(),
 )
 
 /** Écran d'accueil : état du service, commandes de l'automatisation, onboarding (CAP-1, CAP-5). */
@@ -152,7 +159,7 @@ private fun AutomationSection(
     val stateText = when {
         loop.state == AutomationState.Paused && loop.userPaused -> stringResource(R.string.loop_paused_by_user)
         loop.state == AutomationState.Paused -> stringResource(R.string.loop_paused_waiting_target)
-        else -> stringResource(AutomationNotification.stateLabel(loop.state))
+        else -> AutomationNotification.stateText(LocalContext.current, loop.state, loop.resumeAt, loop.zone)
     }
     Text(stringResource(R.string.automation_title), style = MaterialTheme.typography.titleMedium)
     Text(stringResource(R.string.automation_state, stateText), style = MaterialTheme.typography.bodyLarge)

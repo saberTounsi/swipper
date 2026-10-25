@@ -16,9 +16,19 @@ package com.swipper.app.behavior
  * @property restMinMs durée minimale de la pause longue entre deux sessions.
  * @property restMaxMs durée maximale de la pause longue.
  * @property dailyCap nombre maximal de swipes par jour local.
+ * @property activeStartMinute début de la plage horaire d'activité, en minutes depuis
+ *   minuit local, dans [0 ; 1440).
+ * @property activeEndMinute fin (exclue) de la plage, en minutes depuis minuit local,
+ *   dans [0 ; 1440) et ≠ [activeStartMinute]. Une fin inférieure au début désigne une
+ *   plage qui traverse minuit (ex. 20 h–2 h).
+ * @property resumeJitterMinMs décalage aléatoire minimal ajouté à l'ouverture de la plage
+ *   lors d'une reprise (hors plage ou plafond).
+ * @property resumeJitterMaxMs décalage aléatoire maximal de la reprise.
  *
  * @throws IllegalArgumentException si une valeur est ≤ 0, si un min dépasse son max,
- *   si la probabilité n'est pas dans [0 ; 1] ou si la médiane sort de [delayMinMs ; delayMaxMs].
+ *   si la probabilité n'est pas dans [0 ; 1], si la médiane sort de [delayMinMs ; delayMaxMs],
+ *   si une borne de la plage sort de [0 ; 1440) ou si début = fin, ou si un décalage de
+ *   reprise est < 0.
  */
 data class BehaviorConfig(
     val delayMedianMs: Long = 1_800,
@@ -33,6 +43,10 @@ data class BehaviorConfig(
     val restMinMs: Long = 15 * MINUTE_MS,
     val restMaxMs: Long = 90 * MINUTE_MS,
     val dailyCap: Int = 150,
+    val activeStartMinute: Int = 9 * 60,
+    val activeEndMinute: Int = 23 * 60,
+    val resumeJitterMinMs: Long = 2 * MINUTE_MS,
+    val resumeJitterMaxMs: Long = 45 * MINUTE_MS,
 ) {
     init {
         require(delayMedianMs > 0) { "delayMedianMs doit être > 0 (reçu $delayMedianMs)" }
@@ -58,9 +72,24 @@ data class BehaviorConfig(
         require(restMaxMs > 0) { "restMaxMs doit être > 0 (reçu $restMaxMs)" }
         require(restMinMs <= restMaxMs) { "restMinMs ($restMinMs) doit être ≤ restMaxMs ($restMaxMs)" }
         require(dailyCap >= 1) { "dailyCap doit être ≥ 1 (reçu $dailyCap)" }
+        require(activeStartMinute in 0 until MINUTES_PER_DAY) {
+            "activeStartMinute doit être dans [0 ; $MINUTES_PER_DAY) (reçu $activeStartMinute)"
+        }
+        require(activeEndMinute in 0 until MINUTES_PER_DAY) {
+            "activeEndMinute doit être dans [0 ; $MINUTES_PER_DAY) (reçu $activeEndMinute)"
+        }
+        require(activeStartMinute != activeEndMinute) {
+            "activeStartMinute et activeEndMinute doivent différer (reçu $activeStartMinute)"
+        }
+        require(resumeJitterMinMs >= 0) { "resumeJitterMinMs doit être ≥ 0 (reçu $resumeJitterMinMs)" }
+        require(resumeJitterMaxMs >= 0) { "resumeJitterMaxMs doit être ≥ 0 (reçu $resumeJitterMaxMs)" }
+        require(resumeJitterMinMs <= resumeJitterMaxMs) {
+            "resumeJitterMinMs ($resumeJitterMinMs) doit être ≤ resumeJitterMaxMs ($resumeJitterMaxMs)"
+        }
     }
 
     companion object {
         internal const val MINUTE_MS = 60_000L
+        internal const val MINUTES_PER_DAY = 24 * 60
     }
 }

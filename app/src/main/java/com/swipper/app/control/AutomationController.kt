@@ -7,6 +7,7 @@ import com.swipper.app.decision.DirectionPicker
 import com.swipper.app.gesture.Direction
 import com.swipper.app.service.DispatchResult
 import java.time.Instant
+import java.time.ZoneId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
@@ -26,7 +27,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /** État de l'automatisation (cf. `architecture-diagrams.md`). */
-enum class AutomationState { Idle, Running, Paused, Resting, CapReached }
+enum class AutomationState { Idle, Running, Paused, Resting, CapReached, OutsideHours }
 
 /** Exécute un swipe dans [direction] (plan + envoi) ; annulable. */
 fun interface SwipeExecutor {
@@ -40,7 +41,7 @@ fun interface SwipeExecutor {
  *
  * Kotlin pur : moteur, sélecteur, exécuteur, horloge et flux d'état sont injectés ;
  * les attentes passent par `delay()` dans [scope] (temps virtuel en test). Les pauses
- * longues et le plafond attendent une échéance de [clock] par tranches de
+ * longues, le plafond et les heures hors plage attendent une échéance de [clock] par tranches de
  * [WAIT_CHUNK_MS] (le `delay` Android s'allonge en veille profonde).
  * Les méthodes publiques s'appellent depuis un seul thread (le thread principal).
  *
@@ -77,6 +78,17 @@ class AutomationController(
 
     /** Message de la dernière erreur ayant arrêté la boucle ; remis à `null` au démarrage. */
     val error: StateFlow<String?> = _error.asStateFlow()
+
+    private val _resumeAt = MutableStateFlow<Instant?>(null)
+
+    /**
+     * Échéance de l'attente en [AutomationState.OutsideHours] ou [AutomationState.CapReached]
+     * (reprise possible) ; `null` sinon.
+     */
+    val resumeAt: StateFlow<Instant?> = _resumeAt.asStateFlow()
+
+    /** Fuseau de l'horloge de la boucle, pour afficher [resumeAt]. */
+    val zone: ZoneId get() = clock.zone
 
     /** Vrai quand un geste peut partir : app cible, écran utilisable, pas de pause manuelle. */
     private val gate: Flow<Boolean> =
@@ -117,7 +129,7 @@ class AutomationController(
         self.start()
     }
 
-    /** Pause manuelle ; dans Resting/CapReached l'attente continue, la pause s'applique ensuite. */
+    /** Pause manuelle ; dans Resting/CapReached/OutsideHours l'attente continue, la pause s'applique ensuite. */
     fun pause() {
         if (job == null) return
         _userPaused.value = true
@@ -142,6 +154,7 @@ class AutomationController(
     private fun toIdle() {
         job = null
         _userPaused.value = false
+        _resumeAt.value = null
         _state.value = AutomationState.Idle
     }
 
@@ -160,10 +173,12 @@ class AutomationController(
                 is Action.Swipe -> {
                     val result = whileGateOpen {
                         delay(action.delayMs)
-                        executor.execute(picker.pick())
+                        // Plage fermée pendant le délai : pas de swipe ; le prochain
+                        // nextAction() renverra OutsideHours.
+                        if (engine.isInActiveHours(clock.now())) executor.execute(picker.pick()) else null
                     }
                     when (result) {
-                        null -> Unit // interrompu par la porte : ni compté ni échec
+                        null -> Unit // interrompu par la porte ou la plage : ni compté ni échec
                         DispatchResult.Completed -> {
                             consecutiveFailures = 0
                             engine.recordSwipe()
@@ -183,12 +198,24 @@ class AutomationController(
                     waitWallClock(action.durationMs)
                 }
                 is Action.CapReached -> {
+                    _resumeAt.value = clock.now().plusMillis(action.waitMs)
                     _state.value = AutomationState.CapReached
                     waitWallClock(action.waitMs)
                     // Diagramme d'états : CapReached → Idle à minuit.
                     toIdle()
                     syncSwipesToday()
                     return
+                }
+                is Action.OutsideHours -> {
+                    // Attente temporelle comme Resting ; la boucle reprend seule ensuite
+                    // (Running, ou Paused si la porte est fermée).
+                    _resumeAt.value = clock.now().plusMillis(action.waitMs)
+                    _state.value = AutomationState.OutsideHours
+                    waitWallClock(action.waitMs)
+                    // Stop ou exception : remis à null par toIdle() (pas de finally, qui
+                    // pourrait effacer l'échéance d'une nouvelle session).
+                    _resumeAt.value = null
+                    syncSwipesToday()
                 }
             }
         }
@@ -239,7 +266,7 @@ class AutomationController(
         /** Swipes non aboutis (Failed/Cancelled) d'affilée avant l'arrêt de la boucle. */
         const val MAX_CONSECUTIVE_FAILURES = 5
 
-        /** Tranche maximale d'attente des pauses longues et du plafond. */
+        /** Tranche maximale d'attente des pauses longues, du plafond et des heures hors plage. */
         const val WAIT_CHUNK_MS = 30_000L
     }
 }

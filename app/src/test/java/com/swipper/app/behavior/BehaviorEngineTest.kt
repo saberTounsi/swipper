@@ -5,6 +5,7 @@ import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.ZoneId
 import kotlin.random.Random
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -46,6 +47,7 @@ class BehaviorEngineTest {
                 }
                 is Action.Rest -> clock.advance(a.durationMs)
                 is Action.CapReached -> error("plafond inattendu")
+                is Action.OutsideHours -> clock.advance(a.waitMs)
             }
         }
         assertTrue(delays.all { it in 800L..40_000L }, "délai hors [800 ; 40 000] : ${delays.filter { it !in 800L..40_000L }}")
@@ -80,6 +82,12 @@ class BehaviorEngineTest {
                     rests++
                 }
                 is Action.CapReached -> error("plafond inattendu")
+                is Action.OutsideHours -> {
+                    // Le moteur clôt la session hors plage : on vérifie au lieu de supposer.
+                    assertEquals(0, engine.sessionSwipes)
+                    clock.advance(a.waitMs)
+                    inSession = engine.sessionSwipes
+                }
             }
         }
         assertTrue(rests >= 20, "seulement $rests pauses")
@@ -102,13 +110,14 @@ class BehaviorEngineTest {
     }
 
     @Test
-    fun `plafond de 150 swipes renvoie CapReached jusqu'au prochain minuit local`() {
+    fun `plafond de 150 swipes renvoie CapReached jusqu'à l'ouverture du lendemain`() {
         val clock = FakeClock(paris(2026, 6, 15, 14, 30))
-        val engine = BehaviorEngine(defaults, Random(5), clock)
+        val engine = BehaviorEngine(defaults.copy(resumeJitterMinMs = 0, resumeJitterMaxMs = 0), Random(5), clock)
         repeat(150) { engine.recordSwipe() }
         assertEquals(150, engine.swipesToday)
         val a = engine.nextAction()
-        assertEquals(Action.CapReached(Duration.ofHours(9).plusMinutes(30).toMillis()), a)
+        // Lendemain 9 h, et non plus minuit.
+        assertEquals(Action.CapReached(Duration.ofHours(18).plusMinutes(30).toMillis()), a)
         // nextAction ne change pas le compteur et reste au plafond.
         assertEquals(150, engine.swipesToday)
         assertTrue(engine.nextAction() is Action.CapReached)
@@ -135,6 +144,7 @@ class BehaviorEngineTest {
                 }
                 is Action.Rest -> clock.advance(a.durationMs)
                 is Action.CapReached -> cap = a
+                is Action.OutsideHours -> clock.advance(a.waitMs)
             }
         }
         assertEquals(150, engine.swipesToday)
@@ -181,6 +191,7 @@ class BehaviorEngineTest {
                 }
                 is Action.Rest -> Unit
                 is Action.CapReached -> error("plafond inattendu")
+                is Action.OutsideHours -> error("hors plage inattendu")
             }
         }
         val worst = delays.groupingBy { it }.eachCount().maxBy { it.value }
@@ -204,15 +215,18 @@ class BehaviorEngineTest {
     }
 
     @Test
-    fun `heure d'été jour de 23 h et heure d'hiver jour de 25 h`() {
+    fun `plafond - heure d'été jour de 23 h et heure d'hiver jour de 25 h`() {
         // 29/03/2026 : passage à l'heure d'été (jour de 23 h) ; 25/10/2026 : heure d'hiver (25 h).
+        // Attente jusqu'au 9 h suivant le prochain minuit, plus un décalage fixe de 5 min.
+        val jitter = Duration.ofMinutes(5)
         for ((start, expected) in listOf(
-            paris(2026, 3, 29) to Duration.ofHours(23),
-            paris(2026, 10, 25) to Duration.ofHours(25),
-            paris(2026, 3, 28, 22) to Duration.ofHours(2),
+            paris(2026, 3, 29) to Duration.ofHours(23 + 9).plus(jitter),
+            paris(2026, 10, 25) to Duration.ofHours(25 + 9).plus(jitter),
+            paris(2026, 3, 28, 22) to Duration.ofHours(2 + 8).plus(jitter),
         )) {
             val clock = FakeClock(start)
-            val engine = BehaviorEngine(BehaviorConfig(dailyCap = 1), Random(0), clock)
+            val config = BehaviorConfig(dailyCap = 1, resumeJitterMinMs = jitter.toMillis(), resumeJitterMaxMs = jitter.toMillis())
+            val engine = BehaviorEngine(config, Random(0), clock)
             engine.recordSwipe()
             assertEquals(Action.CapReached(expected.toMillis()), engine.nextAction(), "départ $start")
         }
@@ -245,6 +259,7 @@ class BehaviorEngineTest {
                         }
                         is Action.Rest -> clock.advance(a.durationMs)
                         is Action.CapReached -> clock.advance(a.waitMs)
+                        is Action.OutsideHours -> clock.advance(a.waitMs)
                     }
                 }
             }
@@ -273,11 +288,181 @@ class BehaviorEngineTest {
             { BehaviorConfig(restMinMs = 0) },
             { BehaviorConfig(dailyCap = 0) },
             { BehaviorConfig(delayMedianMs = 9_000) },
+            { BehaviorConfig(activeStartMinute = -1) },
+            { BehaviorConfig(activeStartMinute = 1440) },
+            { BehaviorConfig(activeEndMinute = -1) },
+            { BehaviorConfig(activeEndMinute = 1440) },
+            { BehaviorConfig(activeStartMinute = 600, activeEndMinute = 600) },
+            { BehaviorConfig(resumeJitterMinMs = -1) },
+            { BehaviorConfig(resumeJitterMinMs = -5, resumeJitterMaxMs = -1) },
+            { BehaviorConfig(resumeJitterMinMs = 10 * 60_000L, resumeJitterMaxMs = 5 * 60_000L) },
         )
         for (make in invalid) {
             val e = assertThrows<IllegalArgumentException> { make() }
             assertTrue(!e.message.isNullOrBlank())
         }
+    }
+
+    // --- Plage horaire d'activité et reprise aléatoire ---
+
+    private val minute = 60_000L
+
+    /** Vérifie que [a] est un OutsideHours dont l'attente vaut [base] + un décalage de 2–45 min. */
+    private fun assertOutsideHours(a: Action, base: Duration) {
+        assertTrue(a is Action.OutsideHours, "attendu OutsideHours, reçu $a")
+        val wait = (a as Action.OutsideHours).waitMs
+        val lo = base.toMillis() + 2 * minute
+        val hi = base.toMillis() + 45 * minute
+        assertTrue(wait in lo..hi, "attente $wait hors [$lo ; $hi]")
+    }
+
+    @Test
+    fun `dans la plage - comportement inchangé`() {
+        val clock = FakeClock(paris(2026, 6, 15, 14))
+        val engine = BehaviorEngine(defaults, Random(3), clock)
+        repeat(20) {
+            val a = engine.nextAction()
+            assertTrue(a is Action.Swipe, "attendu Swipe, reçu $a")
+            engine.recordSwipe()
+        }
+        // Bornes : 9 h incluse, 23 h exclue.
+        assertTrue(engine.isInActiveHours(LocalTime.of(9, 0)))
+        assertTrue(engine.isInActiveHours(LocalTime.of(22, 59)))
+        assertTrue(!engine.isInActiveHours(LocalTime.of(23, 0)))
+        assertTrue(!engine.isInActiveHours(LocalTime.of(8, 59)))
+    }
+
+    @Test
+    fun `avant la plage - OutsideHours jusqu'à 9 h plus 2 à 45 min`() {
+        val clock = FakeClock(paris(2026, 6, 15, 7, 30))
+        val engine = BehaviorEngine(defaults, Random(3), clock)
+        assertOutsideHours(engine.nextAction(), Duration.ofMinutes(90))
+        assertEquals(0, engine.swipesToday)
+    }
+
+    @Test
+    fun `après la plage - OutsideHours jusqu'au lendemain 9 h plus décalage`() {
+        val clock = FakeClock(paris(2026, 6, 15, 23, 10))
+        val engine = BehaviorEngine(defaults, Random(3), clock)
+        val a = engine.nextAction()
+        assertOutsideHours(a, Duration.ofHours(9).plusMinutes(50))
+        clock.advance((a as Action.OutsideHours).waitMs)
+        assertTrue(engine.nextAction() is Action.Swipe)
+    }
+
+    @Test
+    fun `reprise variée - 100 attentes distinctes, jamais pile à 9 h`() {
+        val clock = FakeClock(paris(2026, 6, 15, 7, 30))
+        val engine = BehaviorEngine(defaults, Random(21), clock)
+        val waits = List(100) { (engine.nextAction() as Action.OutsideHours).waitMs }
+        assertTrue(waits.toSet().size >= 50, "seulement ${waits.toSet().size} valeurs distinctes")
+        assertTrue(waits.none { it == 90 * minute }, "reprise pile à 9 h 00")
+        assertTrue(waits.all { it > 90 * minute })
+    }
+
+    @Test
+    fun `plage à cheval sur minuit - 1 h dans la plage, 3 h hors plage jusqu'à 20 h`() {
+        val config = BehaviorConfig(activeStartMinute = 20 * 60, activeEndMinute = 2 * 60)
+        val clock = FakeClock(paris(2026, 6, 15, 1))
+        val engine = BehaviorEngine(config, Random(3), clock)
+        assertTrue(engine.nextAction() is Action.Swipe)
+        clock.instant = paris(2026, 6, 15, 3)
+        assertOutsideHours(engine.nextAction(), Duration.ofHours(17))
+        clock.instant = paris(2026, 6, 15, 21)
+        assertTrue(engine.nextAction() is Action.Swipe)
+    }
+
+    @Test
+    fun `décalage de reprise borné à 1 min avant la fermeture de la plage`() {
+        // Plage de 10 min (9 h–9 h 10), plus courte que le décalage maximal de 45 min :
+        // reprise entre 9 h 02 et 9 h 09.
+        val config = BehaviorConfig(activeStartMinute = 9 * 60, activeEndMinute = 9 * 60 + 10)
+        val clock = FakeClock(paris(2026, 6, 15, 8))
+        val engine = BehaviorEngine(config, Random(3), clock)
+        repeat(200) {
+            val wait = (engine.nextAction() as Action.OutsideHours).waitMs
+            assertTrue(wait in 62 * minute..69 * minute, "attente $wait hors de [9 h 02 ; 9 h 09]")
+        }
+    }
+
+    @Test
+    fun `hors plage le même jour - nouvelle session à la reprise, pas de Rest juste après`() {
+        val config = BehaviorConfig(
+            dailyCap = 1_000, sessionMin = 10, sessionMax = 10,
+            activeStartMinute = 20 * 60, activeEndMinute = 2 * 60,
+        )
+        val clock = FakeClock(paris(2026, 6, 15, 1))
+        val engine = BehaviorEngine(config, Random(3), clock)
+        repeat(9) {
+            assertTrue(engine.nextAction() is Action.Swipe)
+            engine.recordSwipe()
+        }
+        clock.instant = paris(2026, 6, 15, 3)
+        val out = engine.nextAction()
+        assertTrue(out is Action.OutsideHours, "attendu OutsideHours, reçu $out")
+        clock.advance((out as Action.OutsideHours).waitMs) // même jour, vers 20 h
+        repeat(10) {
+            val a = engine.nextAction()
+            assertTrue(a is Action.Swipe, "swipe ${it + 1} de la nouvelle session : $a")
+            engine.recordSwipe()
+        }
+        assertTrue(engine.nextAction() is Action.Rest)
+    }
+
+    @Test
+    fun `isInActiveHours sur un instant suit le fuseau de l'horloge`() {
+        val engine = BehaviorEngine(defaults, Random(3), FakeClock(paris(2026, 6, 15, 12)))
+        assertTrue(engine.isInActiveHours(paris(2026, 6, 15, 9)))
+        assertTrue(!engine.isInActiveHours(paris(2026, 6, 15, 23)))
+    }
+
+    @Test
+    fun `plafond atteint à 15 h - CapReached jusqu'au lendemain 9 h plus décalage`() {
+        val clock = FakeClock(paris(2026, 6, 15, 15))
+        val engine = BehaviorEngine(defaults, Random(3), clock)
+        repeat(defaults.dailyCap) { engine.recordSwipe() }
+        val a = engine.nextAction()
+        assertTrue(a is Action.CapReached, "attendu CapReached, reçu $a")
+        val wait = (a as Action.CapReached).waitMs
+        val base = Duration.ofHours(18).toMillis()
+        assertTrue(wait in base + 2 * minute..base + 45 * minute, "attente $wait")
+        // Le plafond est contrôlé avant la plage horaire.
+        clock.instant = paris(2026, 6, 15, 23, 30)
+        assertTrue(engine.nextAction() is Action.CapReached)
+    }
+
+    @Test
+    fun `plafond avec plage à cheval sur minuit - reprise à minuit plus décalage`() {
+        // 20 h–2 h : minuit est dans la plage et le compteur repart à zéro à minuit.
+        val config = BehaviorConfig(dailyCap = 1, activeStartMinute = 20 * 60, activeEndMinute = 2 * 60)
+        val clock = FakeClock(paris(2026, 6, 15, 21))
+        val engine = BehaviorEngine(config, Random(3), clock)
+        engine.recordSwipe()
+        val wait = (engine.nextAction() as Action.CapReached).waitMs
+        assertTrue(wait in 3 * 60 * minute + 2 * minute..3 * 60 * minute + 45 * minute, "attente $wait")
+    }
+
+    @Test
+    fun `heure d'été - attente hors plage comptée en durée réelle`() {
+        // Veille du passage à l'heure d'été : 23 h 30 → 9 h = 8 h 30 réelles (et non 9 h 30).
+        val spring = BehaviorEngine(defaults, Random(3), FakeClock(paris(2026, 3, 28, 23, 30)))
+        assertOutsideHours(spring.nextAction(), Duration.ofHours(8).plusMinutes(30))
+        // Veille du passage à l'heure d'hiver : 10 h 30 réelles.
+        val autumn = BehaviorEngine(defaults, Random(3), FakeClock(paris(2026, 10, 24, 23, 30)))
+        assertOutsideHours(autumn.nextAction(), Duration.ofHours(10).plusMinutes(30))
+    }
+
+    @Test
+    fun `config de plage invalide lève IllegalArgumentException`() {
+        assertThrows<IllegalArgumentException> { BehaviorConfig(activeStartMinute = 1440) }
+        assertThrows<IllegalArgumentException> { BehaviorConfig(activeStartMinute = -1) }
+        assertThrows<IllegalArgumentException> { BehaviorConfig(activeEndMinute = -1) }
+        assertThrows<IllegalArgumentException> { BehaviorConfig(activeEndMinute = 1440) }
+        assertThrows<IllegalArgumentException> { BehaviorConfig(activeStartMinute = 540, activeEndMinute = 540) }
+        assertThrows<IllegalArgumentException> { BehaviorConfig(resumeJitterMinMs = -1) }
+        assertThrows<IllegalArgumentException> { BehaviorConfig(resumeJitterMinMs = 3, resumeJitterMaxMs = 2) }
+        // Plage à cheval sur minuit et décalage nul acceptés.
+        BehaviorConfig(activeStartMinute = 20 * 60, activeEndMinute = 2 * 60, resumeJitterMinMs = 0, resumeJitterMaxMs = 0)
     }
 
     @Test

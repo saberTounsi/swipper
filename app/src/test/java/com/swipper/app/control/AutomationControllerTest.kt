@@ -100,7 +100,7 @@ class AutomationControllerTest {
     private fun TestScope.rig(
         config: BehaviorConfig = noCap,
         foreground: String? = TINDER,
-        start: String = "2026-06-15T08:00:00Z",
+        start: String = "2026-06-15T10:00:00Z",
     ) = Rig(this, config, foreground, start)
 
     @Test
@@ -246,22 +246,30 @@ class AutomationControllerTest {
     }
 
     @Test
-    fun `Plafond - CapReached pendant l'attente, aucun swipe, puis Idle a minuit`() = runTest {
+    fun `Plafond - CapReached pendant l'attente, aucun swipe, puis Idle a l'ouverture du lendemain`() = runTest {
         val r = rig(BehaviorConfig(dailyCap = 2, sessionMin = 1_000, sessionMax = 1_000))
         r.controller.start()
         while (r.controller.state.value != AutomationState.CapReached) advanceTimeBy(100)
         assertEquals(2, r.engine.swipesToday)
         val started = r.executor.starts.size
 
-        // 08:00 UTC + quelques secondes : minuit dans ~16 h.
-        advanceTimeBy(15 * 60 * MINUTE)
+        // Échéance affichée : lendemain 9 h + 2–45 min.
+        val resumeAt = r.controller.resumeAt.value
+        assertNotNull(resumeAt)
+        assertTrue(
+            resumeAt!! >= Instant.parse("2026-06-16T09:02:00Z") && resumeAt <= Instant.parse("2026-06-16T09:45:00Z"),
+            "reprise à $resumeAt",
+        )
+        // 10:00 UTC + quelques secondes : reprise le lendemain à 9 h + 2–45 min, soit ≥ 23 h.
+        advanceTimeBy(23 * 60 * MINUTE)
         runCurrent()
         assertEquals(AutomationState.CapReached, r.controller.state.value)
         assertEquals(started, r.executor.starts.size)
 
-        advanceTimeBy(60 * MINUTE)
+        advanceTimeBy(46 * MINUTE)
         runCurrent()
         assertEquals(AutomationState.Idle, r.controller.state.value)
+        assertEquals(null, r.controller.resumeAt.value)
         assertEquals(started, r.executor.starts.size)
         r.scope.cancel()
     }
@@ -382,7 +390,8 @@ class AutomationControllerTest {
 
     @Test
     fun `minuit pendant Running sans plafond - swipesToday repasse a 0`() = runTest {
-        val r = rig(start = "2026-06-15T23:58:00Z")
+        // Plage 20 h–2 h : minuit est dans la plage horaire.
+        val r = rig(noCap.copy(activeStartMinute = 20 * 60, activeEndMinute = 2 * 60), start = "2026-06-15T23:58:00Z")
         val values = mutableListOf<Int>()
         r.scope.launch { r.controller.swipesToday.collect { values += it } }
         r.controller.start()
@@ -399,6 +408,113 @@ class AutomationControllerTest {
         assertNotNull(drop, "pas de remise à zéro après minuit : $values")
         assertTrue(values[drop!!] <= 1, "reprise à ${values[drop]} au lieu de 0 : $values")
         assertEquals(r.engine.swipesToday, r.controller.swipesToday.value)
+        r.scope.cancel()
+    }
+
+    @Test
+    fun `Boucle hors plage - OutsideHours sans swipe, puis reprise seule a la fin de l'attente`() = runTest {
+        val r = rig(start = "2026-06-15T06:00:00Z")
+        r.controller.start()
+        runCurrent()
+        assertEquals(AutomationState.OutsideHours, r.controller.state.value)
+        // Reprise vers 9 h + 2–45 min.
+        val resumeAt = r.controller.resumeAt.value
+        assertNotNull(resumeAt)
+        assertTrue(
+            resumeAt!! >= Instant.parse("2026-06-15T09:02:00Z") && resumeAt <= Instant.parse("2026-06-15T09:45:00Z"),
+            "reprise à $resumeAt",
+        )
+
+        advanceTimeBy(3 * 60 * MINUTE + MINUTE)
+        runCurrent()
+        assertEquals(AutomationState.OutsideHours, r.controller.state.value)
+        assertTrue(r.executor.starts.isEmpty())
+
+        advanceTimeBy(45 * MINUTE)
+        runCurrent()
+        assertEquals(AutomationState.Running, r.controller.state.value)
+        assertEquals(null, r.controller.resumeAt.value)
+        assertTrue(r.executor.starts.isNotEmpty())
+        assertTrue(r.executor.starts.first() >= resumeAt.toEpochMilli() - Instant.parse("2026-06-15T06:00:00Z").toEpochMilli())
+        r.scope.cancel()
+    }
+
+    @Test
+    fun `delai de Swipe qui deborde la fermeture de la plage - aucun swipe, puis OutsideHours`() = runTest {
+        // Délai fixe de 30 s lancé à 22:59:45 : il se termine après 23 h, fermeture de la plage.
+        val config = noCap.copy(delayMinMs = 30_000, delayMedianMs = 30_000, delayMaxMs = 30_000, distractionProbability = 0.0)
+        val r = rig(config, start = "2026-06-15T22:59:45Z")
+        r.controller.start()
+        runCurrent()
+        assertEquals(AutomationState.Running, r.controller.state.value)
+
+        advanceTimeBy(30_000 + 1)
+        runCurrent()
+        assertTrue(r.executor.starts.isEmpty(), "swipe exécuté après la fermeture : ${r.executor.starts}")
+        assertEquals(AutomationState.OutsideHours, r.controller.state.value)
+        assertEquals(0, r.engine.swipesToday)
+        r.scope.cancel()
+    }
+
+    @Test
+    fun `fin de OutsideHours hors app cible - Paused`() = runTest {
+        val r = rig(start = "2026-06-15T06:00:00Z")
+        r.controller.start()
+        runCurrent()
+        assertEquals(AutomationState.OutsideHours, r.controller.state.value)
+        r.foreground.value = OTHER
+        runCurrent()
+        assertEquals(AutomationState.OutsideHours, r.controller.state.value)
+
+        advanceTimeBy(4 * 60 * MINUTE)
+        runCurrent()
+        assertEquals(AutomationState.Paused, r.controller.state.value)
+        assertTrue(r.executor.starts.isEmpty())
+
+        r.foreground.value = TINDER
+        advanceTimeBy(MINUTE)
+        runCurrent()
+        assertEquals(AutomationState.Running, r.controller.state.value)
+        assertTrue(r.executor.starts.isNotEmpty())
+        r.scope.cancel()
+    }
+
+    @Test
+    fun `pause pendant OutsideHours - reste OutsideHours puis Paused a la fin de l'attente`() = runTest {
+        val r = rig(start = "2026-06-15T06:00:00Z")
+        r.controller.start()
+        runCurrent()
+        r.controller.pause()
+        runCurrent()
+        assertEquals(AutomationState.OutsideHours, r.controller.state.value)
+
+        advanceTimeBy(4 * 60 * MINUTE)
+        runCurrent()
+        assertEquals(AutomationState.Paused, r.controller.state.value)
+        assertTrue(r.controller.userPaused.value)
+        assertTrue(r.executor.starts.isEmpty())
+
+        r.controller.resume()
+        advanceTimeBy(MINUTE)
+        runCurrent()
+        assertTrue(r.executor.starts.isNotEmpty())
+        r.scope.cancel()
+    }
+
+    @Test
+    fun `stop pendant OutsideHours - Idle, echeance effacee, plus aucun geste`() = runTest {
+        val r = rig(start = "2026-06-15T06:00:00Z")
+        r.controller.start()
+        runCurrent()
+        assertEquals(AutomationState.OutsideHours, r.controller.state.value)
+
+        r.controller.stop()
+        assertEquals(AutomationState.Idle, r.controller.state.value)
+        assertEquals(null, r.controller.resumeAt.value)
+        advanceTimeBy(5 * 60 * MINUTE)
+        runCurrent()
+        assertEquals(AutomationState.Idle, r.controller.state.value)
+        assertTrue(r.executor.starts.isEmpty())
         r.scope.cancel()
     }
 

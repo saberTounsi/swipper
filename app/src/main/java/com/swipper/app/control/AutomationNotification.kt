@@ -15,6 +15,9 @@ import androidx.core.content.ContextCompat
 import com.swipper.app.R
 import com.swipper.app.service.SwipeAccessibilityService
 import com.swipper.app.ui.MainActivity
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 /**
  * Notification persistante de l'automatisation : affichée tant que la boucle n'est pas
@@ -37,7 +40,7 @@ class AutomationNotification(private val context: Context) {
     }
 
     /** Publie, met à jour ou retire la notification selon [state]. */
-    fun update(state: AutomationState, swipesToday: Int, userPaused: Boolean) {
+    fun update(state: AutomationState, swipesToday: Int, userPaused: Boolean, resumeAt: Instant?, zone: ZoneId) {
         if (state == AutomationState.Idle) {
             cancel()
             return
@@ -46,7 +49,7 @@ class AutomationNotification(private val context: Context) {
         val toggleLabel = if (userPaused) R.string.action_resume else R.string.action_pause
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(context.getString(R.string.notification_title, context.getString(stateLabel(state))))
+            .setContentTitle(context.getString(R.string.notification_title, stateText(context, state, resumeAt, zone)))
             .setContentText(context.getString(R.string.notification_swipes_today, swipesToday))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -101,16 +104,37 @@ class AutomationNotification(private val context: Context) {
         /** Retire la notification sans instance (contrôleur absent). */
         fun cancel(context: Context) = NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
 
-        /** Libellé français d'un état. */
-        fun stateLabel(state: AutomationState): Int = when (state) {
+        /**
+         * Ressource du libellé d'un état. Ceux de [AutomationState.OutsideHours] et
+         * [AutomationState.CapReached] attendent l'heure de reprise : passer par [stateText].
+         */
+        private fun stateLabel(state: AutomationState): Int = when (state) {
             AutomationState.Idle -> R.string.loop_state_idle
             AutomationState.Running -> R.string.loop_state_running
             AutomationState.Paused -> R.string.loop_state_paused
             AutomationState.Resting -> R.string.loop_state_resting
             AutomationState.CapReached -> R.string.loop_state_cap
+            AutomationState.OutsideHours -> R.string.loop_state_outside_hours
         }
+
+        /**
+         * Libellé français d'un état (seul point d'entrée) ; heure de reprise [resumeAt],
+         * affichée dans [zone], pour [AutomationState.OutsideHours] et [AutomationState.CapReached].
+         */
+        fun stateText(context: Context, state: AutomationState, resumeAt: Instant?, zone: ZoneId): String =
+            when (state) {
+                AutomationState.OutsideHours, AutomationState.CapReached ->
+                    context.getString(stateLabel(state), formatResumeTime(resumeAt, zone))
+                else -> context.getString(stateLabel(state))
+            }
     }
 }
+
+private val RESUME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+
+/** Heure locale « HH:mm » (24 h) de [resumeAt] dans [zone] ; « --:-- » si inconnue. */
+internal fun formatResumeTime(resumeAt: Instant?, zone: ZoneId): String =
+    resumeAt?.atZone(zone)?.format(RESUME_FORMAT) ?: "--:--"
 
 /** Reçoit les actions de la notification (non exporté : seules nos `PendingIntent` l'atteignent). */
 class AutomationActionReceiver : BroadcastReceiver() {

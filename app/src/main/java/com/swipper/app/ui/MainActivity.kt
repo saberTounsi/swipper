@@ -59,8 +59,8 @@ class MainActivity : ComponentActivity() {
 
         val loopFlow: Flow<LoopUi> = SwipeAccessibilityService.instance.flatMapLatest { service ->
             val c = service?.controller ?: return@flatMapLatest flowOf(LoopUi())
-            combine(c.state, c.userPaused, c.swipesToday, c.error) { st, paused, count, err ->
-                LoopUi(st, paused, count, err)
+            combine(c.state, c.userPaused, c.swipesToday, c.error, c.resumeAt) { st, paused, count, err, resume ->
+                LoopUi(st, paused, count, err, resume, c.zone)
             }
         }
 

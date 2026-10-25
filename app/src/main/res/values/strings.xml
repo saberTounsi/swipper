@@ -42,7 +42,8 @@
     <string name="loop_state_running">en cours</string>
     <string name="loop_state_paused">en pause</string>
     <string name="loop_state_resting">pause longue entre deux sessions</string>
-    <string name="loop_state_cap">plafond du jour atteint</string>
+    <string name="loop_state_cap">plafond du jour atteint (reprise possible vers %1$s)</string>
+    <string name="loop_state_outside_hours">hors plage horaire (reprise vers %1$s)</string>
     <string name="loop_paused_by_user">en pause (manuelle)</string>
     <string name="loop_paused_waiting_target">en pause : ouvrez Tinder ou Bumble</string>
 

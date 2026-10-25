@@ -1,7 +1,10 @@
 package com.swipper.app.behavior
 
 import java.time.Duration
+import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZonedDateTime
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.exp
@@ -18,8 +21,17 @@ sealed interface Action {
     /** Fin de session : pause longue de [durationMs] avant la session suivante. */
     data class Rest(val durationMs: Long) : Action
 
-    /** Plafond quotidien atteint : attendre [waitMs], soit jusqu'au prochain minuit local. */
+    /**
+     * Plafond quotidien atteint : attendre [waitMs], soit jusqu'à la première ouverture de
+     * la plage horaire à partir du prochain minuit local, plus un décalage aléatoire.
+     */
     data class CapReached(val waitMs: Long) : Action
+
+    /**
+     * Heure locale hors de la plage horaire d'activité : attendre [waitMs], soit jusqu'à
+     * la prochaine ouverture de la plage plus un décalage aléatoire.
+     */
+    data class OutsideHours(val waitMs: Long) : Action
 }
 
 /**
@@ -35,7 +47,9 @@ data class BehaviorState(val swipesToday: Int, val day: LocalDate) {
 
 /**
  * Décide du rythme des swipes (CAP-4) : délai irrégulier, sessions bornées séparées
- * de pauses longues, plafond quotidien jusqu'à minuit local.
+ * de pauses longues, plafond quotidien, plage horaire d'activité. Les reprises (hors
+ * plage, plafond) tombent à l'ouverture de la plage plus un décalage aléatoire, pour ne
+ * jamais repartir à heure fixe.
  *
  * Kotlin pur : [random] et [clock] sont injectés. Les swipes ne sont comptés que par
  * [recordSwipe], que l'appelant invoque quand un swipe a réellement eu lieu ;
@@ -69,10 +83,14 @@ class BehaviorEngine(
     internal var sessionTarget: Int = drawSessionTarget()
         private set
 
+    private val activeStart: LocalTime = minuteToTime(config.activeStartMinute)
+    private val activeEnd: LocalTime = minuteToTime(config.activeEndMinute)
+
     /**
      * Décide de la prochaine action. Ordre : 1) changement de jour → remise à zéro ;
-     * 2) plafond → [Action.CapReached] ; 3) session terminée → [Action.Rest] et nouvelle
-     * session ; 4) sinon [Action.Swipe].
+     * 2) plafond → [Action.CapReached] ; 3) hors plage horaire → [Action.OutsideHours] ;
+     * 4) session terminée → [Action.Rest] et nouvelle session ; 5) sinon [Action.Swipe].
+     * Hors plage, la session en cours est close : la reprise en démarre une nouvelle.
      *
      * Chaque appel engage l'action renvoyée (une fin de session remet la session à zéro
      * et tire une nouvelle cible) : l'appelant doit exécuter chaque action reçue, car
@@ -80,7 +98,14 @@ class BehaviorEngine(
      */
     fun nextAction(): Action {
         rollOverIfNewDay()
-        if (swipesToday >= config.dailyCap) return Action.CapReached(millisUntilNextMidnight())
+        val now = clock.now().atZone(clock.zone)
+        if (swipesToday >= config.dailyCap) return Action.CapReached(millisUntilResumeAfterMidnight(now))
+        if (!isInActiveHours(now.toLocalTime())) {
+            // Longue interruption : sans remise à zéro, un Rest pourrait suivre de près la reprise.
+            sessionSwipes = 0
+            sessionTarget = drawSessionTarget()
+            return Action.OutsideHours(millisUntilResume(now, nextOpeningFrom(now)))
+        }
         if (sessionSwipes >= sessionTarget) {
             val rest = uniformLong(config.restMinMs, config.restMaxMs)
             sessionSwipes = 0
@@ -110,11 +135,57 @@ class BehaviorEngine(
         }
     }
 
-    /** Durée réelle jusqu'au prochain minuit local (jours de 23 h et 25 h compris). */
-    private fun millisUntilNextMidnight(): Long {
-        val now = clock.now()
-        val nextMidnight = now.atZone(clock.zone).toLocalDate().plusDays(1).atStartOfDay(clock.zone)
-        return Duration.between(now, nextMidnight.toInstant()).toMillis()
+    /** Vrai si [instant] tombe dans la plage horaire d'activité (heure locale de `clock.zone`). */
+    fun isInActiveHours(instant: Instant): Boolean = isInActiveHours(instant.atZone(clock.zone).toLocalTime())
+
+    /** Vrai si [time] (heure locale) est dans la plage [activeStart ; activeEnd[, éventuellement à cheval sur minuit. */
+    internal fun isInActiveHours(time: LocalTime): Boolean =
+        if (activeStart < activeEnd) {
+            time >= activeStart && time < activeEnd
+        } else {
+            time >= activeStart || time < activeEnd
+        }
+
+    /** [from] s'il est dans la plage, sinon la prochaine ouverture de la plage. */
+    private fun nextOpeningFrom(from: ZonedDateTime): ZonedDateTime =
+        if (isInActiveHours(from.toLocalTime())) from else nextOccurrence(activeStart, from)
+
+    /**
+     * Première occurrence de l'heure locale [time] strictement après [after]. Une heure
+     * sautée par le passage à l'heure d'été est décalée d'autant (règle de [ZonedDateTime.of]).
+     */
+    private fun nextOccurrence(time: LocalTime, after: ZonedDateTime): ZonedDateTime {
+        var date = after.toLocalDate()
+        while (true) {
+            val candidate = ZonedDateTime.of(date, time, clock.zone)
+            if (candidate.isAfter(after)) return candidate
+            date = date.plusDays(1)
+        }
+    }
+
+    /**
+     * Plafond : reprise à la première ouverture de plage à partir du prochain minuit local
+     * (le compteur ne repart à zéro qu'à minuit), plus le décalage aléatoire.
+     */
+    private fun millisUntilResumeAfterMidnight(now: ZonedDateTime): Long {
+        val nextMidnight = now.toLocalDate().plusDays(1).atStartOfDay(clock.zone)
+        return millisUntilResume(now, nextOpeningFrom(nextMidnight))
+    }
+
+    /**
+     * Durée réelle (jours de 23 h et 25 h compris) de [now] jusqu'à [opening] plus un
+     * décalage tiré dans [resumeJitterMinMs ; resumeJitterMaxMs], réduit si besoin pour que
+     * la reprise tombe au moins [CLOSING_MARGIN_MS] avant la fermeture suivante de la plage
+     * (un retard d'ordonnancement ne doit pas faire sauter toute la plage).
+     */
+    private fun millisUntilResume(now: ZonedDateTime, opening: ZonedDateTime): Long {
+        val closing = nextOccurrence(activeEnd, opening)
+        val room = Duration.between(opening.toInstant(), closing.toInstant()).toMillis()
+        val latest = (room - CLOSING_MARGIN_MS).coerceAtLeast(0)
+        val max = minOf(config.resumeJitterMaxMs, latest)
+        val min = minOf(config.resumeJitterMinMs, max)
+        val jitter = uniformLong(min, max)
+        return Duration.between(now.toInstant(), opening.toInstant()).toMillis() + jitter
     }
 
     private fun drawSessionTarget(): Int = random.nextInt(config.sessionMin, config.sessionMax + 1)
@@ -143,6 +214,11 @@ class BehaviorEngine(
     private fun uniformLong(min: Long, max: Long): Long = random.nextLong(min, max + 1)
 
     companion object {
+        private fun minuteToTime(minute: Int): LocalTime = LocalTime.of(minute / 60, minute % 60)
+
+        /** Marge minimale entre une reprise et la fermeture suivante de la plage. */
+        internal const val CLOSING_MARGIN_MS = 60_000L
+
         /** Tirages log-normaux tentés avant de retomber sur un tirage uniforme dans les bornes. */
         internal const val MAX_DELAY_DRAWS = 20
     }
