@@ -35,13 +35,26 @@ sealed interface Action {
 }
 
 /**
- * État minimal du moteur, à persister (story 6) : nombre de swipes du jour local [day].
+ * État du moteur, persisté (story 6) : nombre de swipes du jour local [day] et avancement
+ * de la session en cours ([sessionSwipes] sur [sessionTarget]).
  *
- * @throws IllegalArgumentException si [swipesToday] < 0.
+ * @property sessionTarget cible de la session en cours ; `null` = à tirer (aucune session).
+ * @property restUntil fin de la pause longue en cours ; `null` = pas de pause. Restaurée,
+ *   elle est respectée (Stop puis Démarrer, ou service tué, ne la raccourcit pas).
+ * @throws IllegalArgumentException si [swipesToday] < 0, [sessionSwipes] < 0 ou
+ *   [sessionTarget] ≤ 0.
  */
-data class BehaviorState(val swipesToday: Int, val day: LocalDate) {
+data class BehaviorState(
+    val swipesToday: Int,
+    val day: LocalDate,
+    val sessionSwipes: Int = 0,
+    val sessionTarget: Int? = null,
+    val restUntil: Instant? = null,
+) {
     init {
         require(swipesToday >= 0) { "swipesToday doit être ≥ 0 (reçu $swipesToday)" }
+        require(sessionSwipes >= 0) { "sessionSwipes doit être ≥ 0 (reçu $sessionSwipes)" }
+        require(sessionTarget == null || sessionTarget > 0) { "sessionTarget doit être > 0 (reçu $sessionTarget)" }
     }
 }
 
@@ -56,7 +69,10 @@ data class BehaviorState(val swipesToday: Int, val day: LocalDate) {
  * [nextAction] ne modifie pas le compteur de swipes.
  *
  * @param initialState état restauré ; `null` = aucun swipe aujourd'hui. Un état d'un
- *   autre jour est remis à zéro au premier appel.
+ *   jour passé est remis à zéro au premier appel. La session restaurée reprend là où elle
+ *   en était ; une cible hors de [BehaviorConfig.sessionMin ; BehaviorConfig.sessionMax]
+ *   (réglages modifiés depuis) est tirée à nouveau et la session repart de zéro. Une pause
+ *   longue restaurée ([BehaviorState.restUntil]) est respectée jusqu'à son terme.
  */
 class BehaviorEngine(
     private val config: BehaviorConfig,
@@ -72,16 +88,28 @@ class BehaviorEngine(
     var day: LocalDate = initialState?.day ?: today()
         private set
 
-    /** État à persister. */
-    val state: BehaviorState get() = BehaviorState(swipesToday, day)
-
     /** Swipes enregistrés dans la session en cours. */
-    internal var sessionSwipes: Int = 0
+    var sessionSwipes: Int = initialState?.sessionSwipes ?: 0
         private set
 
     /** Nombre de swipes visé pour la session en cours, dans [sessionMin ; sessionMax]. */
-    internal var sessionTarget: Int = drawSessionTarget()
+    var sessionTarget: Int = initialState?.sessionTarget
+        ?.takeIf { it in config.sessionMin..config.sessionMax }
+        ?: drawSessionTarget().also { sessionSwipes = 0 } // cible retirée : nouvelle session
         private set
+
+    /** Fin de la pause longue en cours (posée à chaque [Action.Rest]) ; `null` hors pause. */
+    var restUntil: Instant? = initialState?.restUntil
+        private set
+
+    /**
+     * Pause restaurée à respecter : tant que l'heure n'a pas atteint [restUntil],
+     * [nextAction] renvoie le [Action.Rest] restant.
+     */
+    private var restoredRest: Boolean = initialState?.restUntil != null
+
+    /** État à persister. */
+    val state: BehaviorState get() = BehaviorState(swipesToday, day, sessionSwipes, sessionTarget, restUntil)
 
     private val activeStart: LocalTime = minuteToTime(config.activeStartMinute)
     private val activeEnd: LocalTime = minuteToTime(config.activeEndMinute)
@@ -89,7 +117,7 @@ class BehaviorEngine(
     /**
      * Décide de la prochaine action. Ordre : 1) changement de jour → remise à zéro ;
      * 2) plafond → [Action.CapReached] ; 3) hors plage horaire → [Action.OutsideHours] ;
-     * 4) session terminée → [Action.Rest] et nouvelle session ; 5) sinon [Action.Swipe].
+     * 3 bis) pause restaurée non finie → [Action.Rest] du temps restant ; 4) session terminée → [Action.Rest] et nouvelle session ; 5) sinon [Action.Swipe].
      * Hors plage, la session en cours est close : la reprise en démarre une nouvelle.
      *
      * Chaque appel engage l'action renvoyée (une fin de session remet la session à zéro
@@ -104,12 +132,19 @@ class BehaviorEngine(
             // Longue interruption : sans remise à zéro, un Rest pourrait suivre de près la reprise.
             sessionSwipes = 0
             sessionTarget = drawSessionTarget()
+            clearRest()
             return Action.OutsideHours(millisUntilResume(now, nextOpeningFrom(now)))
+        }
+        restUntil?.let { until ->
+            val remaining = until.toEpochMilli() - now.toInstant().toEpochMilli()
+            if (remaining <= 0) clearRest() else if (restoredRest) return Action.Rest(remaining)
         }
         if (sessionSwipes >= sessionTarget) {
             val rest = uniformLong(config.restMinMs, config.restMaxMs)
             sessionSwipes = 0
             sessionTarget = drawSessionTarget()
+            restUntil = now.toInstant().plusMillis(rest)
+            restoredRest = false
             return Action.Rest(rest)
         }
         return Action.Swipe(drawDelay())
@@ -132,7 +167,13 @@ class BehaviorEngine(
             swipesToday = 0
             sessionSwipes = 0
             sessionTarget = drawSessionTarget()
+            clearRest()
         }
+    }
+
+    private fun clearRest() {
+        restUntil = null
+        restoredRest = false
     }
 
     /** Vrai si [instant] tombe dans la plage horaire d'activité (heure locale de `clock.zone`). */

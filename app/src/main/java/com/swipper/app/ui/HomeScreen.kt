@@ -73,7 +73,9 @@ fun HomeScreen(
     onTogglePauseClick: () -> Unit,
     onStopClick: () -> Unit,
     modifier: Modifier = Modifier,
+    onSettingsClick: () -> Unit = {},
     showRestrictedHelp: Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU,
+    showXiaomiGuide: Boolean = isXiaomiFamily(Build.MANUFACTURER),
 ) {
     Column(
         modifier = modifier
@@ -100,6 +102,8 @@ fun HomeScreen(
                 Text(stringResource(body), style = MaterialTheme.typography.bodyMedium)
             }
         }
+
+        Text(stringResource(R.string.automation_swipes_today, loop.swipesToday), style = MaterialTheme.typography.titleMedium)
 
         if (status == ServiceStatus.StoppedBySystem) {
             Button(onClick = onEnableClick, modifier = Modifier.fillMaxWidth()) {
@@ -144,6 +148,12 @@ fun HomeScreen(
                 }
             }
         }
+
+        OutlinedButton(onClick = onSettingsClick, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.action_settings))
+        }
+
+        if (showXiaomiGuide) XiaomiGuideCard()
     }
 }
 
@@ -163,7 +173,6 @@ private fun AutomationSection(
     }
     Text(stringResource(R.string.automation_title), style = MaterialTheme.typography.titleMedium)
     Text(stringResource(R.string.automation_state, stateText), style = MaterialTheme.typography.bodyLarge)
-    Text(stringResource(R.string.automation_swipes_today, loop.swipesToday), style = MaterialTheme.typography.bodyMedium)
     Text(stringResource(R.string.automation_hint), style = MaterialTheme.typography.bodySmall)
     loop.error?.let {
         Text(
@@ -189,7 +198,7 @@ private fun AutomationSection(
 @Composable
 private fun HomeScreenInactivePreview() {
     MaterialTheme {
-        HomeScreen(ServiceStatus.Inactive, LoopUi(), {}, {}, {}, {}, {}, {}, showRestrictedHelp = true)
+        HomeScreen(ServiceStatus.Inactive, LoopUi(), {}, {}, {}, {}, {}, {}, showRestrictedHelp = true, showXiaomiGuide = true)
     }
 }
 

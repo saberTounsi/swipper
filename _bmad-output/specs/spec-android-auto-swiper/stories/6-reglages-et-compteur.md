@@ -2,9 +2,10 @@
 title: 'Story 6 — Réglages, compteur sauvegardé et guide Xiaomi'
 type: 'feature'
 created: '2026-10-25'
-status: 'draft'
+status: 'done'
 route: 'dispatch'
 review_loop_iteration: 0
+baseline_commit: '405a52e90a7bc3548e1b18bcc802b14482f0e69c'
 context:
   - '{project-root}/_bmad-output/specs/spec-android-auto-swiper/SPEC.md'
   - '{project-root}/_bmad-output/specs/spec-android-auto-swiper/architecture.md'
@@ -60,21 +61,51 @@ context:
 ## Tasks & Acceptance
 
 **Execution:**
-- [ ] `app/src/main/java/com/swipper/app/settings/Settings.kt` -- data class des réglages, défauts, `validate(): List<FieldError>`, `toBehaviorConfig()` -- pur
-- [ ] `app/src/main/java/com/swipper/app/settings/SettingsRepository.kt` -- DataStore : Flow des réglages, `save()`, lecture/écriture de l'état du moteur -- persistance
-- [ ] `app/src/main/java/com/swipper/app/behavior/BehaviorEngine.kt` + tests -- `BehaviorState` étendu (session) et restauration -- session persistée
-- [ ] `app/src/main/java/com/swipper/app/service/SwipeAccessibilityService.kt`, `control/AutomationController.kt` -- moteur et apps cibles construits depuis les réglages à chaque Démarrer ; sauvegarde de l'état -- intégration
-- [ ] `app/src/main/java/com/swipper/app/ui/SettingsScreen.kt`, `ui/XiaomiGuide.kt`, `HomeScreen.kt`, `MainActivity.kt`, `strings.xml` -- écran de réglages, guide, compteur -- UI
-- [ ] `app/src/test/java/com/swipper/app/settings/SettingsTest.kt` -- validation, conversion, détection Xiaomi (fonction pure prenant le fabricant) -- matrice I/O
+- [x] `app/src/main/java/com/swipper/app/settings/Settings.kt` -- data class des réglages, défauts, `validate(): List<FieldError>`, `toBehaviorConfig()` -- pur
+- [x] `app/src/main/java/com/swipper/app/settings/SettingsRepository.kt` -- DataStore : Flow des réglages, `save()`, lecture/écriture de l'état du moteur -- persistance
+- [x] `app/src/main/java/com/swipper/app/behavior/BehaviorEngine.kt` + tests -- `BehaviorState` étendu (session) et restauration -- session persistée
+- [x] `app/src/main/java/com/swipper/app/service/SwipeAccessibilityService.kt`, `control/AutomationController.kt` -- moteur et apps cibles construits depuis les réglages à chaque Démarrer ; sauvegarde de l'état -- intégration
+- [x] `app/src/main/java/com/swipper/app/ui/SettingsScreen.kt`, `ui/XiaomiGuide.kt`, `HomeScreen.kt`, `MainActivity.kt`, `strings.xml` -- écran de réglages, guide, compteur -- UI
+- [x] `app/src/test/java/com/swipper/app/settings/SettingsTest.kt` -- validation, conversion, détection Xiaomi (fonction pure prenant le fabricant) -- matrice I/O
 
 **Acceptance Criteria:**
 - Given des réglages modifiés, when on tue l'app et la relance, then les valeurs sont conservées et utilisées au Démarrer suivant.
 
 ## Implementation Notes
 
+- **Réglages → session** : `AutomationController` reçoit un `setupProvider` appelé à chaque `start()` (moteur + `DirectionPicker` + apps cibles construits depuis les réglages et l'état sauvegardé). Tant que la lecture initiale de DataStore (asynchrone, dans la portée du service) n'est pas finie, le provider renvoie `null` : le Démarrer est différé puis lancé par `setupReady()` ; `stop()` l'annule. Aucune lecture bloquante sur le thread principal.
+- **État persisté** : `BehaviorState` = `swipesToday`, `day`, `sessionSwipes`, `sessionTarget`, `restUntil`. Le contrôleur le signale (`onStateChanged`) après chaque `recordSwipe` et chaque `nextAction` qui le modifie (fin de session, pause, changement de jour). `restUntil` est posé à chaque `Rest` ; restauré, il est respecté (`Rest(restant)` tant que l'heure ne l'a pas atteint), effacé à son terme, au changement de jour et hors plage. Une cible restaurée hors des nouvelles bornes est retirée et la session repart de zéro.
+- **Écriture** : `saveBehaviorStateAsync` numérote les états et un seul collecteur (portée du processus, `Dispatchers.IO`) écrit toujours le plus récent ; une écriture en échec est journalisée sans arrêter les suivantes. `currentBehaviorState()` attend l'écriture du dernier état demandé avant de lire : une nouvelle instance du service ne relit jamais un état plus ancien. Un swipe ne peut être perdu que si le processus meurt avant cette écriture.
+- **Lecture tolérante** : sans jour lisible, aucun état ; des champs de session corrompus sont remis à zéro sans toucher au compteur du jour (pas de contournement du plafond). Réglages illisibles → défauts.
+- **Saisie** : délai médian à une décimale au plus (précision du formulaire relu, pas d'arrondi silencieux) ; min > max signalé sous le min, début = fin sous la fin.
+- **Compteur de l'accueil** : pendant une session, celui du contrôleur (le même que la notification) ; à l'arrêt, l'état sauvegardé, ramené à 0 si son jour est passé (réévalué toutes les 30 s).
+- **Écart assumé** : la visibilité du bouton flottant suit immédiatement les apps cibles enregistrées ; le filtrage des gestes, lui, garde celles du Démarrer.
+- **Guide Xiaomi** : écrans `com.miui.securitycenter/…AutoStartManagementActivity` et `com.miui.powerkeeper/…HiddenAppsConfigActivity`, repli sur les infos de l'appli puis les réglages (`ActivityNotFoundException` et `SecurityException`) ; l'étape « verrouiller dans les récentes » est un texte (pas d'écran). Non vérifié sur un vrai téléphone Xiaomi.
+
 ## Spec Change Log
 
 ## Review Triage Log
+
+| # | Couche | Constat | Verdict | Route | Preuve |
+|---|---|---|---|---|---|
+| 1 | blind, edge | Reconnexion : lecture de l'état avant l'écriture en attente → compteur plus bas, plafond dépassable | medium | patch | L'écriture asynchrone n'est ni attendue ni vidée avant la lecture. |
+| 2 | blind | Fin de pause longue non sauvegardée : Stop → Démarrer saute la pause | medium | patch | `BehaviorState` sans échéance de pause. |
+| 3 | blind, edge, verif | `runBlocking` sur le thread principal au Démarrer | medium | patch | Risque d'ANR si DataStore est lent à froid. |
+| 4 | blind, edge | Délai à 2 décimales arrondi à l'affichage → formulaire modifié, valeur changée en silence | low | patch | `formatSeconds` arrondit au dixième. |
+| 5 | blind | Un champ stocké invalide remet tous les réglages par défaut | low | rejet | Aucune migration de format aujourd'hui. |
+| 6 | blind | Ratio illisible → 0 au lieu du défaut | low | patch | Correction directe. |
+| 7 | blind, edge | Échec d'enregistrement → plantage sans message | low | patch | try/catch direct. |
+| 8 | blind, edge | Apps cibles : réglages en direct pour le bouton flottant, instantané pour la boucle | low | rejet | Écart documenté ; le geste reste limité aux apps de la session. |
+| 9 | blind | Collecte sans cycle de vie, minuterie du jour toujours active | low | patch | `collectAsStateWithLifecycle` déjà disponible. |
+| 10 | blind | Compteur qui recule brièvement après Stop | low | rejet | Transitoire, le temps de l'écriture. |
+| 11 | blind, edge | Session restaurée ≥ nouvelle cible → pause immédiate | low | patch | Remise à zéro directe. |
+| 12 | edge | État corrompu dans la session → tout l'état ignoré, compteur à 0 | low | patch | Assainir les champs de session. |
+| 13 | edge | Exception autre qu'IO dans l'écrivain asynchrone → plus aucune sauvegarde | low | patch | Garde directe. |
+| 14 | edge | Réglages ouverts avant la première lecture → rien ne s'affiche | low | rejet | Fenêtre de quelques ms. |
+| 15 | verif | État signalé après une fin de session non testé | medium | patch | Supprimer `reportState()` laisse tout vert. |
+| 16 | verif | Aller-retour DataStore non testé | medium | patch | Inverser deux clés laisse tout vert. |
+| 17 | verif | Câblage réglages → session dans le service non testé | medium | defer | Code de service Android ; extraire une fonction pure plus tard. |
+| 18 | blind | Petits détails d'UI (texte d'exemple codé en dur, saisies « 7: », guide non masquable) | low | rejet | Cosmétique. |
 
 ## Verification
 

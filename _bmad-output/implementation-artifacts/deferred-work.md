@@ -34,3 +34,6 @@
 - source_spec: `_bmad-output/specs/spec-android-auto-swiper/stories/5-controle-automatisation.md`
   summary: La règle « GestureDispatcher ne garde comme base de continueStroke que les traits acceptés » n'est pas testée.
   evidence: Revue story 5 (#11). Demande Robolectric ou un test instrumenté.
+- source_spec: `_bmad-output/specs/spec-android-auto-swiper/stories/6-reglages-et-compteur.md`
+  summary: Le câblage réglages → session (ratio, config, apps cibles, état restauré) dans SwipeAccessibilityService.sessionSetup n'est pas testé.
+  evidence: Revue story 6 (#17). Extraire une fonction pure sessionSetupFrom(settings, state, random, clock) et la tester.

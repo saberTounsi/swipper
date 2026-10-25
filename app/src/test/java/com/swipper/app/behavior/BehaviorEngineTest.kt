@@ -165,7 +165,7 @@ class BehaviorEngineTest {
         repeat(150) { engine.recordSwipe() }
         clock.instant = paris(2026, 6, 14, 14)
         assertTrue(engine.nextAction() is Action.CapReached)
-        assertEquals(BehaviorState(150, LocalDate.of(2026, 6, 15)), engine.state)
+        assertEquals(150 to LocalDate.of(2026, 6, 15), engine.state.let { it.swipesToday to it.day })
     }
 
     @Test
@@ -175,7 +175,7 @@ class BehaviorEngineTest {
         engine.nextAction()
         clock.advance(2 * 60_000L)
         engine.recordSwipe()
-        assertEquals(BehaviorState(1, LocalDate.of(2026, 6, 16)), engine.state)
+        assertEquals(1 to LocalDate.of(2026, 6, 16), engine.state.let { it.swipesToday to it.day })
     }
 
     @Test
@@ -236,12 +236,12 @@ class BehaviorEngineTest {
     fun `état initial du jour est conservé et celui de la veille remis à zéro`() {
         val clock = FakeClock(paris(2026, 6, 15, 9))
         val today = BehaviorEngine(defaults, Random(0), clock, BehaviorState(150, LocalDate.of(2026, 6, 15)))
-        assertEquals(BehaviorState(150, LocalDate.of(2026, 6, 15)), today.state)
+        assertEquals(150 to LocalDate.of(2026, 6, 15), today.state.let { it.swipesToday to it.day })
         assertTrue(today.nextAction() is Action.CapReached)
 
         val yesterday = BehaviorEngine(defaults, Random(0), clock, BehaviorState(150, LocalDate.of(2026, 6, 14)))
         assertTrue(yesterday.nextAction() is Action.Swipe)
-        assertEquals(BehaviorState(0, LocalDate.of(2026, 6, 15)), yesterday.state)
+        assertEquals(0 to LocalDate.of(2026, 6, 15), yesterday.state.let { it.swipesToday to it.day })
         assertThrows<IllegalArgumentException> { BehaviorState(-1, LocalDate.of(2026, 6, 15)) }
     }
 
@@ -475,5 +475,80 @@ class BehaviorEngineTest {
             val code = f.readLines().filterNot { it.trimStart().let { l -> l.startsWith("//") || l.startsWith("*") || l.startsWith("/*") } }
             assertTrue(code.none { android.containsMatchIn(it) }, "${f.name} référence Android")
         }
+    }
+
+    @Test
+    fun `session restaurée reprend là où elle en était`() {
+        val clock = FakeClock(paris(2026, 6, 15, 10))
+        val config = BehaviorConfig(sessionMin = 25, sessionMax = 60)
+        val saved = BehaviorState(40, LocalDate.of(2026, 6, 15), sessionSwipes = 30, sessionTarget = 32)
+        val engine = BehaviorEngine(config, Random(1), clock, saved)
+        assertEquals(saved, engine.state)
+        repeat(2) {
+            assertTrue(engine.nextAction() is Action.Swipe)
+            engine.recordSwipe()
+        }
+        assertEquals(42, engine.swipesToday)
+        assertTrue(engine.nextAction() is Action.Rest, "la session restaurée doit se terminer à 32")
+    }
+
+    @Test
+    fun `cible restaurée hors des nouvelles bornes - retirée et session remise à zéro`() {
+        val clock = FakeClock(paris(2026, 6, 15, 10))
+        val config = BehaviorConfig(sessionMin = 5, sessionMax = 10)
+        val saved = BehaviorState(30, LocalDate.of(2026, 6, 15), sessionSwipes = 30, sessionTarget = 50)
+        val engine = BehaviorEngine(config, Random(1), clock, saved)
+        assertTrue(engine.sessionTarget in 5..10)
+        assertEquals(0, engine.sessionSwipes)
+        assertEquals(30, engine.swipesToday)
+        assertTrue(engine.nextAction() is Action.Swipe, "pas de pause immédiate")
+    }
+
+    @Test
+    fun `pause longue persistée et respectée après restauration`() {
+        val clock = FakeClock(paris(2026, 6, 15, 10))
+        val config = BehaviorConfig(sessionMin = 2, sessionMax = 2, restMinMs = 20 * 60_000L, restMaxMs = 20 * 60_000L)
+        val engine = BehaviorEngine(config, Random(1), clock)
+        repeat(2) {
+            assertTrue(engine.nextAction() is Action.Swipe)
+            engine.recordSwipe()
+        }
+        assertEquals(Action.Rest(20 * 60_000L), engine.nextAction())
+        val saved = engine.state
+        assertEquals(clock.instant.plusMillis(20 * 60_000L), saved.restUntil)
+        assertEquals(0, saved.sessionSwipes)
+
+        // Stop puis Démarrer 5 min plus tard : la pause continue pour le temps restant.
+        clock.advance(5 * 60_000L)
+        val restored = BehaviorEngine(config, Random(2), clock, saved)
+        assertEquals(Action.Rest(15 * 60_000L), restored.nextAction())
+        assertEquals(Action.Rest(15 * 60_000L), restored.nextAction(), "tant que la pause n'est pas finie")
+
+        // Pause finie : swipe et restUntil effacé.
+        clock.advance(15 * 60_000L)
+        assertTrue(restored.nextAction() is Action.Swipe)
+        assertEquals(null, restored.state.restUntil)
+    }
+
+    @Test
+    fun `plafond atteint puis redémarrage le même jour donne CapReached immédiatement`() {
+        val clock = FakeClock(paris(2026, 6, 15, 14))
+        val first = BehaviorEngine(defaults, Random(5), clock)
+        repeat(150) { first.recordSwipe() }
+        val restarted = BehaviorEngine(defaults, Random(6), clock, first.state)
+        assertTrue(restarted.nextAction() is Action.CapReached)
+    }
+
+    @Test
+    fun `état d'hier avec session en cours repart à zéro`() {
+        val clock = FakeClock(paris(2026, 6, 15, 10))
+        val saved = BehaviorState(80, LocalDate.of(2026, 6, 14), sessionSwipes = 20, sessionTarget = 30)
+        val engine = BehaviorEngine(defaults, Random(2), clock, saved)
+        assertTrue(engine.nextAction() is Action.Swipe)
+        assertEquals(0, engine.swipesToday)
+        assertEquals(0, engine.sessionSwipes)
+        assertEquals(LocalDate.of(2026, 6, 15), engine.day)
+        assertThrows<IllegalArgumentException> { BehaviorState(0, LocalDate.of(2026, 6, 15), sessionSwipes = -1) }
+        assertThrows<IllegalArgumentException> { BehaviorState(0, LocalDate.of(2026, 6, 15), sessionTarget = 0) }
     }
 }

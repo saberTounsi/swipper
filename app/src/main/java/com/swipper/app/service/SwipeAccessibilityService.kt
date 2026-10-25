@@ -17,19 +17,22 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.swipper.app.R
-import com.swipper.app.behavior.BehaviorConfig
 import com.swipper.app.behavior.BehaviorEngine
+import com.swipper.app.behavior.BehaviorState
 import com.swipper.app.behavior.SystemClock
 import com.swipper.app.control.AutomationController
 import com.swipper.app.control.AutomationNotification
 import com.swipper.app.control.AutomationState
 import com.swipper.app.control.FloatingControls
+import com.swipper.app.control.SessionSetup
 import com.swipper.app.control.TargetApps
 import com.swipper.app.decision.DirectionPicker
 import com.swipper.app.gesture.Direction
 import com.swipper.app.gesture.GestureGenerator
 import com.swipper.app.gesture.ScreenSize
 import com.swipper.app.gesture.SwipeZone
+import com.swipper.app.settings.Settings as UserSettings
+import com.swipper.app.settings.SettingsRepository
 import kotlin.random.Random
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -66,6 +69,11 @@ class SwipeAccessibilityService : AccessibilityService() {
     var controller: AutomationController? = null
         private set
 
+    /** Réglages et état du moteur lus dans DataStore ; `null` tant que la lecture n'est pas finie. */
+    private var loaded: Loaded? = null
+
+    private class Loaded(var settings: UserSettings, var state: BehaviorState?)
+
     /** Paquet au premier plan, selon le dernier `TYPE_WINDOW_STATE_CHANGED` reçu. */
     val foregroundPackage: StateFlow<String?> get() = foreground
 
@@ -86,9 +94,11 @@ class SwipeAccessibilityService : AccessibilityService() {
         scope = s
         foreground.value = null
         registerScreenReceiver()
+        val repository = SettingsRepository.get(this)
+        loaded = null
         val c = AutomationController(
             scope = s,
-            engine = BehaviorEngine(BehaviorConfig(), Random.Default, SystemClock),
+            engine = BehaviorEngine(UserSettings().toBehaviorConfig(), Random.Default, SystemClock),
             picker = DirectionPicker(Random.Default),
             executor = { direction ->
                 val plan = generator.plan(screenSize(), SwipeZone.DEFAULT, direction)
@@ -97,8 +107,28 @@ class SwipeAccessibilityService : AccessibilityService() {
             foregroundPackage = foreground,
             clock = SystemClock,
             deviceUsable = deviceUsable,
+            isTarget = { pkg -> TargetApps.isTarget(pkg, currentSettings().allowedPackages) },
+            setupProvider = ::sessionSetup,
+            onStateChanged = { state ->
+                loaded?.state = state
+                repository.saveBehaviorStateAsync(state)
+            },
         )
         controller = c
+        // Les réglages suivent DataStore (appliqués au prochain Démarrer) ; l'état sauvegardé
+        // n'est lu qu'une fois, ensuite le contrôleur en est la source.
+        s.launch {
+            val state = repository.currentBehaviorState()
+            repository.settings.collect { settings ->
+                val l = loaded
+                if (l == null) {
+                    loaded = Loaded(settings, state)
+                    c.setupReady() // Démarrer demandé pendant la lecture
+                } else {
+                    l.settings = settings
+                }
+            }
+        }
         val n = AutomationNotification(this)
         notification = n
         val o = FloatingControls(this, c)
@@ -112,10 +142,31 @@ class SwipeAccessibilityService : AccessibilityService() {
             combine(foreground, c.state, c.userPaused) { pkg, st, paused -> Triple(pkg, st, paused) }
                 .collect { (pkg, st, paused) ->
                     // Visible dans une app cible (pour démarrer) ou tant qu'une session existe.
-                    o.render(TargetApps.isTarget(pkg) || st != AutomationState.Idle, st, paused)
+                    o.render(
+                        TargetApps.isTarget(pkg, currentSettings().allowedPackages) || st != AutomationState.Idle,
+                        st,
+                        paused,
+                    )
                 }
         }
         connected.value = this
+    }
+
+    private fun currentSettings(): UserSettings = loaded?.settings ?: UserSettings()
+
+    /**
+     * Moteur, sélecteur et apps cibles d'une nouvelle session, depuis les réglages et l'état
+     * sauvegardé ; `null` tant que la lecture initiale (asynchrone) n'est pas finie : le
+     * contrôleur diffère alors le Démarrer jusqu'à `setupReady()`.
+     */
+    private fun sessionSetup(): SessionSetup? {
+        val l = loaded ?: return null
+        val settings = l.settings.orDefaults()
+        return SessionSetup(
+            engine = BehaviorEngine(settings.toBehaviorConfig(), Random.Default, SystemClock, l.state),
+            picker = DirectionPicker(Random.Default, settings.rightRatio),
+            isTarget = { pkg -> TargetApps.isTarget(pkg, settings.allowedPackages) },
+        )
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -189,6 +240,7 @@ class SwipeAccessibilityService : AccessibilityService() {
         notification = null
         scope?.cancel()
         scope = null
+        loaded = null
         testJob = null
         screenReceiver?.let { runCatching { unregisterReceiver(it) } }
         screenReceiver = null

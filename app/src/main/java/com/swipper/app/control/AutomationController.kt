@@ -2,6 +2,7 @@ package com.swipper.app.control
 
 import com.swipper.app.behavior.Action
 import com.swipper.app.behavior.BehaviorEngine
+import com.swipper.app.behavior.BehaviorState
 import com.swipper.app.behavior.Clock
 import com.swipper.app.decision.DirectionPicker
 import com.swipper.app.gesture.Direction
@@ -35,6 +36,16 @@ fun interface SwipeExecutor {
 }
 
 /**
+ * Moteur, sélecteur et apps cibles d'une session, construits depuis les réglages à chaque
+ * Démarrer (story 6).
+ */
+class SessionSetup(
+    val engine: BehaviorEngine,
+    val picker: DirectionPicker,
+    val isTarget: (String?) -> Boolean,
+)
+
+/**
  * Boucle de la session (CAP-5) : comportement → décision → geste → exécution, seulement
  * quand une app cible est au premier plan, que l'écran est allumé et déverrouillé
  * ([deviceUsable]) et que l'utilisateur n'a pas mis en pause.
@@ -48,17 +59,30 @@ fun interface SwipeExecutor {
  * Une exception levée par la boucle la ramène à [AutomationState.Idle], renseigne
  * [error] puis est relancée vers le `CoroutineExceptionHandler` de [scope].
  * [MAX_CONSECUTIVE_FAILURES] swipes non aboutis d'affilée arrêtent aussi la boucle.
+ *
+ * @param setupProvider appelé à chaque [start] : remplace moteur, sélecteur et apps
+ *   cibles (réglages et état sauvegardé) ; `null` = garder ceux du constructeur. S'il
+ *   renvoie `null` (réglages pas encore lus), le démarrage est différé jusqu'à [setupReady].
+ * @param onStateChanged appelé avec l'état du moteur après chaque swipe enregistré et
+ *   chaque décision qui le modifie (fin de session, changement de jour), pour le persister.
  */
 class AutomationController(
     private val scope: CoroutineScope,
-    private val engine: BehaviorEngine,
-    private val picker: DirectionPicker,
+    engine: BehaviorEngine,
+    picker: DirectionPicker,
     private val executor: SwipeExecutor,
     private val foregroundPackage: StateFlow<String?>,
     private val clock: Clock,
     private val deviceUsable: StateFlow<Boolean> = MutableStateFlow(true),
-    private val isTarget: (String?) -> Boolean = TargetApps::isTarget,
+    isTarget: (String?) -> Boolean = TargetApps::isTarget,
+    private val setupProvider: (() -> SessionSetup?)? = null,
+    private val onStateChanged: (BehaviorState) -> Unit = {},
 ) {
+    private var engine: BehaviorEngine = engine
+    private var picker: DirectionPicker = picker
+    private var isTarget: (String?) -> Boolean = isTarget
+    private var lastReportedState: BehaviorState = engine.state
+
     private val _state = MutableStateFlow(AutomationState.Idle)
 
     /** État courant de la boucle. */
@@ -71,7 +95,7 @@ class AutomationController(
 
     private val _swipesToday = MutableStateFlow(engine.swipesToday)
 
-    /** Swipes réussis du jour (non persisté, story 6). */
+    /** Swipes réussis du jour (persisté via [onStateChanged]). */
     val swipesToday: StateFlow<Int> = _swipesToday.asStateFlow()
 
     private val _error = MutableStateFlow<String?>(null)
@@ -93,7 +117,8 @@ class AutomationController(
     /** Vrai quand un geste peut partir : app cible, écran utilisable, pas de pause manuelle. */
     private val gate: Flow<Boolean> =
         combine(foregroundPackage, deviceUsable, _userPaused) { pkg, usable, paused ->
-            !paused && usable && isTarget(pkg)
+            // Propriété (remplacée à chaque Démarrer), pas le paramètre du constructeur.
+            !paused && usable && this@AutomationController.isTarget(pkg)
         }.distinctUntilChanged()
 
     private fun gateOpen(): Boolean =
@@ -102,9 +127,24 @@ class AutomationController(
     private var job: Job? = null
     private var consecutiveFailures = 0
 
+    /** Démarrer demandé avant que [setupProvider] ne puisse fournir une session. */
+    private var startPending = false
+
     /** Démarre la boucle (sans effet si elle tourne déjà). Paused tant que la porte est fermée. */
     fun start() {
         if (job?.isActive == true) return
+        if (setupProvider != null) {
+            val setup = setupProvider.invoke()
+            if (setup == null) {
+                startPending = true
+                return
+            }
+            engine = setup.engine
+            picker = setup.picker
+            isTarget = setup.isTarget
+            lastReportedState = engine.state
+        }
+        startPending = false
         _error.value = null
         _userPaused.value = false
         consecutiveFailures = 0
@@ -129,6 +169,11 @@ class AutomationController(
         self.start()
     }
 
+    /** À appeler quand [setupProvider] peut fournir une session : lance un Démarrer différé. */
+    fun setupReady() {
+        if (startPending) start()
+    }
+
     /** Pause manuelle ; dans Resting/CapReached/OutsideHours l'attente continue, la pause s'applique ensuite. */
     fun pause() {
         if (job == null) return
@@ -147,6 +192,7 @@ class AutomationController(
 
     /** Arrête tout : annule la boucle et le geste en cours, retour immédiat à Idle. */
     fun stop() {
+        startPending = false
         job?.cancel()
         toIdle()
     }
@@ -169,6 +215,7 @@ class AutomationController(
             awaitGate()
             val action = engine.nextAction()
             syncSwipesToday() // bascule de jour éventuelle
+            reportState() // fin de session ou changement de jour
             when (action) {
                 is Action.Swipe -> {
                     val result = whileGateOpen {
@@ -183,6 +230,7 @@ class AutomationController(
                             consecutiveFailures = 0
                             engine.recordSwipe()
                             syncSwipesToday()
+                            reportState()
                         }
                         DispatchResult.Failed, DispatchResult.Cancelled -> {
                             if (++consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
@@ -218,6 +266,15 @@ class AutomationController(
                     syncSwipesToday()
                 }
             }
+        }
+    }
+
+    /** Signale l'état du moteur s'il a changé depuis le dernier signalement. */
+    private fun reportState() {
+        val state = engine.state
+        if (state != lastReportedState) {
+            lastReportedState = state
+            onStateChanged(state)
         }
     }
 

@@ -2,6 +2,7 @@ package com.swipper.app.control
 
 import com.swipper.app.behavior.BehaviorConfig
 import com.swipper.app.behavior.BehaviorEngine
+import com.swipper.app.behavior.BehaviorState
 import com.swipper.app.behavior.Clock
 import com.swipper.app.decision.DirectionPicker
 import com.swipper.app.gesture.Direction
@@ -541,5 +542,177 @@ class AutomationControllerTest {
         runCurrent()
         assertNotNull(r.executor.starts.getOrNull(1))
         r.scope.cancel()
+    }
+
+    /** Horloge UTC dérivée du temps virtuel, à partir de 2026-06-15T10:00Z. */
+    private fun TestScope.virtualClock() = object : Clock {
+        override fun now(): Instant = Instant.parse("2026-06-15T10:00:00Z").plusMillis(currentTime)
+        override val zone: ZoneId = ZoneOffset.UTC
+    }
+
+    private fun TestScope.childScope() = CoroutineScope(
+        backgroundScope.coroutineContext + SupervisorJob(backgroundScope.coroutineContext[Job]) +
+            StandardTestDispatcher(testScheduler),
+    )
+
+    /** Contrôleur dont chaque Démarrer construit un moteur [config] depuis [saved()] et signale l'état dans [reported]. */
+    private fun TestScope.persistingController(
+        config: BehaviorConfig,
+        scope: CoroutineScope,
+        executor: FakeExecutor,
+        foreground: MutableStateFlow<String?>,
+        saved: () -> BehaviorState?,
+        reported: MutableList<BehaviorState>,
+        allowed: () -> Set<String> = { setOf(TINDER) },
+        ready: () -> Boolean = { true },
+    ): AutomationController {
+        val clock = virtualClock()
+        return AutomationController(
+            scope = scope,
+            engine = BehaviorEngine(BehaviorConfig(), Random(1), clock),
+            picker = DirectionPicker(Random(2)),
+            executor = executor,
+            foregroundPackage = foreground,
+            clock = clock,
+            setupProvider = {
+                if (!ready()) {
+                    null
+                } else {
+                    val targets = allowed()
+                    SessionSetup(
+                        BehaviorEngine(config, Random(3), clock, saved()),
+                        DirectionPicker(Random(4), 0.6),
+                        { pkg -> pkg in targets },
+                    )
+                }
+            },
+            onStateChanged = { reported += it },
+        )
+    }
+
+    @Test
+    fun `setupProvider appliqué à chaque Démarrer et état signalé après chaque swipe`() = runTest {
+        val foreground = MutableStateFlow<String?>("com.bumble.app")
+        val executor = FakeExecutor { currentTime }
+        val scope = childScope()
+        // État sauvegardé : 40 swipes aujourd'hui, session à 10 / 1000.
+        val reported = mutableListOf<BehaviorState>()
+        var saved: BehaviorState? =
+            BehaviorState(40, java.time.LocalDate.of(2026, 6, 15), sessionSwipes = 10, sessionTarget = 1_000)
+        var allowed = setOf(TINDER)
+        val controller = persistingController(
+            noCap, scope, executor, foreground, { reported.lastOrNull() ?: saved }, reported, { allowed },
+        )
+
+        // Bumble au premier plan mais seul Tinder est autorisé : Paused, aucun geste.
+        controller.start()
+        runCurrent()
+        assertEquals(40, controller.swipesToday.value)
+        assertEquals(AutomationState.Paused, controller.state.value)
+        advanceTimeBy(MINUTE)
+        runCurrent()
+        assertTrue(executor.starts.isEmpty())
+        controller.stop()
+
+        // Réglages changés (Bumble autorisé) : pris en compte au Démarrer suivant.
+        allowed = setOf("com.bumble.app")
+        controller.start()
+        runCurrent()
+        assertEquals(AutomationState.Running, controller.state.value)
+        advanceTimeBy(MINUTE)
+        runCurrent()
+        val done = executor.completed
+        assertTrue(done > 0)
+        assertEquals(40 + done, controller.swipesToday.value)
+        assertEquals(40 + done, reported.last().swipesToday)
+        assertEquals(10 + done, reported.last().sessionSwipes)
+        assertEquals(1_000, reported.last().sessionTarget)
+        controller.stop()
+        scope.cancel()
+
+        // « Service tué puis relancé » : nouveau contrôleur, moteur construit depuis l'état sauvegardé seul.
+        saved = reported.last()
+        val scope2 = childScope()
+        val executor2 = FakeExecutor { currentTime }
+        val reported2 = mutableListOf<BehaviorState>()
+        val restarted = persistingController(noCap, scope2, executor2, foreground, { saved }, reported2, { allowed })
+        restarted.start()
+        runCurrent()
+        assertEquals(40 + done, restarted.swipesToday.value)
+        advanceTimeBy(MINUTE)
+        runCurrent()
+        assertTrue(executor2.completed > 0)
+        assertEquals(10 + done + executor2.completed, reported2.last().sessionSwipes, "session reprise")
+        assertEquals(40 + done + executor2.completed, reported2.last().swipesToday)
+        scope2.cancel()
+    }
+
+    @Test
+    fun `fin de session signalée puis pause respectée par un contrôleur relancé`() = runTest {
+        val config = BehaviorConfig(
+            dailyCap = 1_000, sessionMin = 2, sessionMax = 2, restMinMs = 20 * MINUTE, restMaxMs = 20 * MINUTE,
+        )
+        val foreground = MutableStateFlow<String?>(TINDER)
+        val scope = childScope()
+        val executor = FakeExecutor { currentTime }
+        val reported = mutableListOf<BehaviorState>()
+        val controller = persistingController(config, scope, executor, foreground, { null }, reported)
+        controller.start()
+        var guard = 0
+        while (controller.state.value != AutomationState.Resting) {
+            advanceTimeBy(1_000)
+            runCurrent()
+            check(++guard < 600) { "jamais en pause" }
+        }
+        val atRest = reported.last()
+        assertEquals(2, executor.completed)
+        assertEquals(0, atRest.sessionSwipes)
+        assertEquals(2, atRest.sessionTarget)
+        assertEquals(2, atRest.swipesToday)
+        assertNotNull(atRest.restUntil)
+        controller.stop()
+        scope.cancel()
+
+        // Stop puis Démarrer 5 min plus tard (nouveau contrôleur) : toujours en pause.
+        advanceTimeBy(5 * MINUTE)
+        val scope2 = childScope()
+        val executor2 = FakeExecutor { currentTime }
+        val restarted = persistingController(config, scope2, executor2, foreground, { atRest }, mutableListOf())
+        restarted.start()
+        runCurrent()
+        assertEquals(AutomationState.Resting, restarted.state.value)
+        advanceTimeBy(14 * MINUTE)
+        runCurrent()
+        assertTrue(executor2.starts.isEmpty(), "swipe pendant la pause restaurée")
+        advanceTimeBy(2 * MINUTE)
+        runCurrent()
+        assertTrue(executor2.starts.isNotEmpty(), "pas de reprise après la pause")
+        scope2.cancel()
+    }
+
+    @Test
+    fun `Démarrer avant la lecture des réglages - différé jusqu'à setupReady`() = runTest {
+        val foreground = MutableStateFlow<String?>(TINDER)
+        val scope = childScope()
+        val executor = FakeExecutor { currentTime }
+        var ready = false
+        val controller = persistingController(noCap, scope, executor, foreground, { null }, mutableListOf(), ready = { ready })
+        controller.start()
+        runCurrent()
+        assertEquals(AutomationState.Idle, controller.state.value)
+        ready = true
+        controller.setupReady()
+        runCurrent()
+        assertEquals(AutomationState.Running, controller.state.value)
+
+        // Stop annule un Démarrer différé.
+        controller.stop()
+        ready = false
+        controller.start()
+        controller.stop()
+        ready = true
+        controller.setupReady()
+        assertEquals(AutomationState.Idle, controller.state.value)
+        scope.cancel()
     }
 }
