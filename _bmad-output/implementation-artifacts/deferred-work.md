@@ -37,3 +37,6 @@
 - source_spec: `_bmad-output/specs/spec-android-auto-swiper/stories/6-reglages-et-compteur.md`
   summary: Le câblage réglages → session (ratio, config, apps cibles, état restauré) dans SwipeAccessibilityService.sessionSetup n'est pas testé.
   evidence: Revue story 6 (#17). Extraire une fonction pure sessionSetupFrom(settings, state, random, clock) et la tester.
+- source_spec: `_bmad-output/specs/spec-android-auto-swiper/stories/7-ouverture-de-profil.md`
+  summary: Une calibration mal placée (sur la photo) fait défiler les photos puis le Retour sort de Tinder ; Swipper ne peut pas savoir si le profil s'est ouvert.
+  evidence: Séance Redmi 2026-10-25. Pistes : consigne du calque plus explicite (« touchez la flèche ↑ du profil »), aperçu de la position enregistrée, ou désactiver l'ouverture de profil après 2 sorties d'app consécutives juste après un Retour.

@@ -81,6 +81,7 @@ context:
   - Tap non abouti (ex. non calibré) : repli sur le swipe normal, sans compter d'échec.
   - Démarrer refusé (toast) pendant une calibration ; le calque n'accepte qu'un toucher à un doigt, presque immobile (seuil de glissement du système) ; le formulaire de réglages n'est plus reconstruit par une calibration.
 - **Non vérifié sur téléphone** : affichage du calque, réception de Retour par le calque, effet réel du tap et du Retour dans Tinder/Bumble.
+- Séance Redmi (2026-10-25) : boucle en cours dans Tinder, compteur 22→25 en ~6 s, Pause/notification OK. Avec la calibration posée sur la photo (0,90 ; 0,64), le tap fait défiler les photos puis le Retour sort de Tinder → la boucle se met en pause (garde-fou OK). Ouverture de profil à 0 % : les cartes partent bien. À refaire : calibrer sur la flèche ↑ du profil.
 
 ## Spec Change Log
 
