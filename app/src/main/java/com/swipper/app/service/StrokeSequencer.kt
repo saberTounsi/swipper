@@ -52,7 +52,8 @@ class StrokeSequencer(private val liftTimeoutMs: Long = LIFT_TIMEOUT_MS) {
     /**
      * Exécute [plan] sur [sink]. Annulable : à l'annulation, plus aucun segment n'est
      * envoyé et, si un trait « à continuer » laisse le doigt posé, un trait de levée
-     * est envoyé avant de propager la [CancellationException].
+     * est envoyé avant de propager la [CancellationException]. De même, si un segment
+     * est refusé alors que le doigt est posé, une levée est tentée avant [DispatchResult.Failed].
      */
     suspend fun run(plan: SwipePlan, sink: StrokeSink): DispatchResult {
         val segments = plan.segments
@@ -72,7 +73,15 @@ class StrokeSequencer(private val liftTimeoutMs: Long = LIFT_TIMEOUT_MS) {
                 }
                 when (outcome) {
                     Outcome.Done -> Unit
-                    Outcome.Refused -> return DispatchResult.Failed
+                    Outcome.Refused -> {
+                        // Le trait précédent « à continuer » laisse le doigt posé : on tente de le lever.
+                        val at = fingerDownAt
+                        if (at != null) {
+                            fingerDownAt = null
+                            withTimeoutOrNull(liftTimeoutMs) { await { onDone -> sink.lift(at, onDone) } }
+                        }
+                        return DispatchResult.Failed
+                    }
                     Outcome.Cancelled -> {
                         fingerDownAt = null // le système a déjà levé le doigt
                         return DispatchResult.Cancelled

@@ -104,15 +104,36 @@ class StrokeSequencerTest {
     }
 
     @Test
-    fun `dispatch refuse - aucun segment suivant, Failed`() = runTest {
+    fun `dispatch refuse doigt pose - aucun segment suivant, levee du doigt, Failed`() = runTest {
         val p = plan(5)
         val sink = FakeSink(replyFor = { if (it == 1) Reply.Refuse else Reply.Complete })
 
         val result = StrokeSequencer().run(p, sink)
 
         assertEquals(DispatchResult.Failed, result)
-        assertEquals(2, sink.calls.size)
-        assertTrue(sink.calls.none { it is Call.Lift })
+        assertEquals(3, sink.calls.size)
+        assertEquals(Call.Lift(p.segments[0].end), sink.calls.last())
+    }
+
+    @Test
+    fun `premier segment refuse - pas de levee, Failed`() = runTest {
+        val p = plan(3)
+        val sink = FakeSink(replyFor = { Reply.Refuse })
+
+        assertEquals(DispatchResult.Failed, StrokeSequencer().run(p, sink))
+        assertEquals(listOf(Call.First(p.segments[0], true)), sink.calls)
+    }
+
+    @Test
+    fun `refus puis levee sans reponse - Failed apres le delai de levee`() = runTest {
+        val p = plan(4)
+        val sink = FakeSink(replyFor = { if (it == 2) Reply.Refuse else Reply.Complete }, liftReply = Reply.Hang)
+
+        val result = StrokeSequencer().run(p, sink)
+
+        assertEquals(DispatchResult.Failed, result)
+        assertEquals(Call.Lift(p.segments[1].end), sink.calls.last())
+        assertTrue(currentTime >= StrokeSequencer.LIFT_TIMEOUT_MS)
     }
 
     @Test

@@ -39,13 +39,15 @@ class GestureDispatcher(private val service: AccessibilityService) : StrokeSink 
     }
 
     private fun dispatch(stroke: StrokeDescription, onDone: (Boolean) -> Unit): Boolean {
-        last = stroke
         val gesture = GestureDescription.Builder().addStroke(stroke).build()
         val callback = object : AccessibilityService.GestureResultCallback() {
             override fun onCompleted(gestureDescription: GestureDescription?) = onDone(true)
             override fun onCancelled(gestureDescription: GestureDescription?) = onDone(false)
         }
-        return service.dispatchGesture(gesture, callback, null)
+        // Seul un trait accepté devient la base de la continuation (levée après refus comprise).
+        val sent = service.dispatchGesture(gesture, callback, null)
+        if (sent) last = stroke
+        return sent
     }
 
     private fun Segment.toPath(): Path = Path().apply {

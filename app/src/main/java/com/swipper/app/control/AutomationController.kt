@@ -1,0 +1,245 @@
+package com.swipper.app.control
+
+import com.swipper.app.behavior.Action
+import com.swipper.app.behavior.BehaviorEngine
+import com.swipper.app.behavior.Clock
+import com.swipper.app.decision.DirectionPicker
+import com.swipper.app.gesture.Direction
+import com.swipper.app.service.DispatchResult
+import java.time.Instant
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+
+/** État de l'automatisation (cf. `architecture-diagrams.md`). */
+enum class AutomationState { Idle, Running, Paused, Resting, CapReached }
+
+/** Exécute un swipe dans [direction] (plan + envoi) ; annulable. */
+fun interface SwipeExecutor {
+    suspend fun execute(direction: Direction): DispatchResult
+}
+
+/**
+ * Boucle de la session (CAP-5) : comportement → décision → geste → exécution, seulement
+ * quand une app cible est au premier plan, que l'écran est allumé et déverrouillé
+ * ([deviceUsable]) et que l'utilisateur n'a pas mis en pause.
+ *
+ * Kotlin pur : moteur, sélecteur, exécuteur, horloge et flux d'état sont injectés ;
+ * les attentes passent par `delay()` dans [scope] (temps virtuel en test). Les pauses
+ * longues et le plafond attendent une échéance de [clock] par tranches de
+ * [WAIT_CHUNK_MS] (le `delay` Android s'allonge en veille profonde).
+ * Les méthodes publiques s'appellent depuis un seul thread (le thread principal).
+ *
+ * Une exception levée par la boucle la ramène à [AutomationState.Idle], renseigne
+ * [error] puis est relancée vers le `CoroutineExceptionHandler` de [scope].
+ * [MAX_CONSECUTIVE_FAILURES] swipes non aboutis d'affilée arrêtent aussi la boucle.
+ */
+class AutomationController(
+    private val scope: CoroutineScope,
+    private val engine: BehaviorEngine,
+    private val picker: DirectionPicker,
+    private val executor: SwipeExecutor,
+    private val foregroundPackage: StateFlow<String?>,
+    private val clock: Clock,
+    private val deviceUsable: StateFlow<Boolean> = MutableStateFlow(true),
+    private val isTarget: (String?) -> Boolean = TargetApps::isTarget,
+) {
+    private val _state = MutableStateFlow(AutomationState.Idle)
+
+    /** État courant de la boucle. */
+    val state: StateFlow<AutomationState> = _state.asStateFlow()
+
+    private val _userPaused = MutableStateFlow(false)
+
+    /** `true` si l'utilisateur a mis en pause (indépendamment de l'app au premier plan). */
+    val userPaused: StateFlow<Boolean> = _userPaused.asStateFlow()
+
+    private val _swipesToday = MutableStateFlow(engine.swipesToday)
+
+    /** Swipes réussis du jour (non persisté, story 6). */
+    val swipesToday: StateFlow<Int> = _swipesToday.asStateFlow()
+
+    private val _error = MutableStateFlow<String?>(null)
+
+    /** Message de la dernière erreur ayant arrêté la boucle ; remis à `null` au démarrage. */
+    val error: StateFlow<String?> = _error.asStateFlow()
+
+    /** Vrai quand un geste peut partir : app cible, écran utilisable, pas de pause manuelle. */
+    private val gate: Flow<Boolean> =
+        combine(foregroundPackage, deviceUsable, _userPaused) { pkg, usable, paused ->
+            !paused && usable && isTarget(pkg)
+        }.distinctUntilChanged()
+
+    private fun gateOpen(): Boolean =
+        !_userPaused.value && deviceUsable.value && isTarget(foregroundPackage.value)
+
+    private var job: Job? = null
+    private var consecutiveFailures = 0
+
+    /** Démarre la boucle (sans effet si elle tourne déjà). Paused tant que la porte est fermée. */
+    fun start() {
+        if (job?.isActive == true) return
+        _error.value = null
+        _userPaused.value = false
+        consecutiveFailures = 0
+        syncSwipesToday()
+        _state.value = if (gateOpen()) AutomationState.Running else AutomationState.Paused
+        lateinit var self: Job
+        self = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                loop()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // Une ancienne boucle déjà remplacée ne touche pas à la nouvelle session.
+                if (job === self) {
+                    toIdle()
+                    _error.value = e.message ?: e::class.java.simpleName
+                }
+                throw e
+            }
+        }
+        job = self
+        self.start()
+    }
+
+    /** Pause manuelle ; dans Resting/CapReached l'attente continue, la pause s'applique ensuite. */
+    fun pause() {
+        if (job == null) return
+        _userPaused.value = true
+        if (_state.value == AutomationState.Running) _state.value = AutomationState.Paused
+    }
+
+    /** Lève la pause manuelle ; la boucle reprend si la porte est ouverte. */
+    fun resume() {
+        if (job == null) return
+        _userPaused.value = false
+    }
+
+    /** Pause ou reprise selon l'état de la pause manuelle. */
+    fun togglePause() = if (_userPaused.value) resume() else pause()
+
+    /** Arrête tout : annule la boucle et le geste en cours, retour immédiat à Idle. */
+    fun stop() {
+        job?.cancel()
+        toIdle()
+    }
+
+    private fun toIdle() {
+        job = null
+        _userPaused.value = false
+        _state.value = AutomationState.Idle
+    }
+
+    /** Compteur affiché : 0 si le jour du moteur est passé (le moteur ne bascule qu'à son prochain appel). */
+    private fun syncSwipesToday() {
+        val today = clock.now().atZone(clock.zone).toLocalDate()
+        _swipesToday.value = if (today.isAfter(engine.day)) 0 else engine.swipesToday
+    }
+
+    private suspend fun loop() {
+        while (true) {
+            awaitGate()
+            val action = engine.nextAction()
+            syncSwipesToday() // bascule de jour éventuelle
+            when (action) {
+                is Action.Swipe -> {
+                    val result = whileGateOpen {
+                        delay(action.delayMs)
+                        executor.execute(picker.pick())
+                    }
+                    when (result) {
+                        null -> Unit // interrompu par la porte : ni compté ni échec
+                        DispatchResult.Completed -> {
+                            consecutiveFailures = 0
+                            engine.recordSwipe()
+                            syncSwipesToday()
+                        }
+                        DispatchResult.Failed, DispatchResult.Cancelled -> {
+                            if (++consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                                toIdle()
+                                _error.value = "$MAX_CONSECUTIVE_FAILURES swipes refusés ou annulés d'affilée"
+                                return
+                            }
+                        }
+                    }
+                }
+                is Action.Rest -> {
+                    _state.value = AutomationState.Resting
+                    waitWallClock(action.durationMs)
+                }
+                is Action.CapReached -> {
+                    _state.value = AutomationState.CapReached
+                    waitWallClock(action.waitMs)
+                    // Diagramme d'états : CapReached → Idle à minuit.
+                    toIdle()
+                    syncSwipesToday()
+                    return
+                }
+            }
+        }
+    }
+
+    /** Attend [ms] selon [clock] (heure murale), par tranches d'au plus [WAIT_CHUNK_MS]. */
+    private suspend fun waitWallClock(ms: Long) {
+        val deadline: Instant = clock.now().plusMillis(ms)
+        while (true) {
+            val remaining = deadline.toEpochMilli() - clock.now().toEpochMilli()
+            if (remaining <= 0) return
+            delay(minOf(remaining, WAIT_CHUNK_MS))
+        }
+    }
+
+    /** Suspend en Paused tant que la porte est fermée, puis passe en Running. */
+    private suspend fun awaitGate() {
+        if (!gateOpen()) {
+            _state.value = AutomationState.Paused
+            gate.first { it }
+        }
+        _state.value = AutomationState.Running
+    }
+
+    /**
+     * Exécute [block] et l'annule dès que la porte se ferme (pause, app cible quittée,
+     * écran éteint ou verrouillé) : renvoie alors `null`. Une annulation de la boucle
+     * elle-même est propagée.
+     */
+    private suspend fun <T> whileGateOpen(block: suspend () -> T): T? = coroutineScope {
+        val work = async { block() }
+        val watcher = launch {
+            gate.first { !it }
+            _state.value = AutomationState.Paused
+            work.cancel()
+        }
+        try {
+            work.await()
+        } catch (e: CancellationException) {
+            currentCoroutineContext().ensureActive()
+            null
+        } finally {
+            watcher.cancel()
+        }
+    }
+
+    companion object {
+        /** Swipes non aboutis (Failed/Cancelled) d'affilée avant l'arrêt de la boucle. */
+        const val MAX_CONSECUTIVE_FAILURES = 5
+
+        /** Tranche maximale d'attente des pauses longues et du plafond. */
+        const val WAIT_CHUNK_MS = 30_000L
+    }
+}

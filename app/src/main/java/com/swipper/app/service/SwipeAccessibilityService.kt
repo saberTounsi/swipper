@@ -1,19 +1,37 @@
 package com.swipper.app.service
 
 import android.accessibilityservice.AccessibilityService
+import android.app.KeyguardManager
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
+import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import com.swipper.app.R
+import com.swipper.app.behavior.BehaviorConfig
+import com.swipper.app.behavior.BehaviorEngine
+import com.swipper.app.behavior.SystemClock
+import com.swipper.app.control.AutomationController
+import com.swipper.app.control.AutomationNotification
+import com.swipper.app.control.AutomationState
+import com.swipper.app.control.FloatingControls
+import com.swipper.app.control.TargetApps
+import com.swipper.app.decision.DirectionPicker
 import com.swipper.app.gesture.Direction
 import com.swipper.app.gesture.GestureGenerator
 import com.swipper.app.gesture.ScreenSize
 import com.swipper.app.gesture.SwipeZone
 import kotlin.random.Random
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -23,29 +41,127 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
  * Service d'accessibilité de Swipper.
  *
- * Il ne lit pas l'écran. Story 3 : expose son instance connectée et exécute des
- * swipes de test ([testSwipe]) via [GestureDispatcher].
+ * Il ne lit pas l'écran. Il suit le paquet au premier plan (`TYPE_WINDOW_STATE_CHANGED`),
+ * porte l'[AutomationController] de la session (story 5), le bouton flottant et la
+ * notification, et exécute des swipes de test ([testSwipe]) via [GestureDispatcher].
  */
 class SwipeAccessibilityService : AccessibilityService() {
 
     private var scope: CoroutineScope? = null
     private var testJob: Job? = null
     private val generator = GestureGenerator(Random.Default)
+    private val foreground = MutableStateFlow<String?>(null)
+    private val deviceUsable = MutableStateFlow(true)
+    private var screenReceiver: BroadcastReceiver? = null
+    private var notification: AutomationNotification? = null
+    private var overlay: FloatingControls? = null
+
+    /** Contrôleur de la boucle, non nul tant que le service est connecté. */
+    var controller: AutomationController? = null
+        private set
+
+    /** Paquet au premier plan, selon le dernier `TYPE_WINDOW_STATE_CHANGED` reçu. */
+    val foregroundPackage: StateFlow<String?> get() = foreground
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        scope?.cancel()
-        scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+        release()
+        // Une exception non rattrapée arrête la boucle (le contrôleur repasse en Idle)
+        // et s'affiche, sans faire planter l'app.
+        val handler = CoroutineExceptionHandler { _, e ->
+            Log.e(TAG, "Erreur dans la boucle", e)
+            Toast.makeText(
+                this,
+                getString(R.string.toast_loop_error, e.message ?: e::class.java.simpleName),
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+        val s = CoroutineScope(SupervisorJob() + Dispatchers.Main + handler)
+        scope = s
+        foreground.value = null
+        registerScreenReceiver()
+        val c = AutomationController(
+            scope = s,
+            engine = BehaviorEngine(BehaviorConfig(), Random.Default, SystemClock),
+            picker = DirectionPicker(Random.Default),
+            executor = { direction ->
+                val plan = generator.plan(screenSize(), SwipeZone.DEFAULT, direction)
+                GestureDispatcher(this).execute(plan)
+            },
+            foregroundPackage = foreground,
+            clock = SystemClock,
+            deviceUsable = deviceUsable,
+        )
+        controller = c
+        val n = AutomationNotification(this)
+        notification = n
+        val o = FloatingControls(this, c)
+        overlay = o
+        s.launch {
+            combine(c.state, c.swipesToday, c.userPaused) { st, count, paused -> Triple(st, count, paused) }
+                .collect { (st, count, paused) -> n.update(st, count, paused) }
+        }
+        s.launch {
+            combine(foreground, c.state, c.userPaused) { pkg, st, paused -> Triple(pkg, st, paused) }
+                .collect { (pkg, st, paused) ->
+                    // Visible dans une app cible (pour démarrer) ou tant qu'une session existe.
+                    o.render(TargetApps.isTarget(pkg) || st != AutomationState.Idle, st, paused)
+                }
+        }
         connected.value = this
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Volontairement vide.
+        if (event == null) return
+        val pkg = foregroundFrom(
+            eventType = event.eventType,
+            packageName = event.packageName?.toString(),
+            className = event.className?.toString(),
+            ownPackage = packageName,
+            transientPackages = transientPackages(),
+        ) ?: return
+        foreground.value = pkg
+    }
+
+    /** Fenêtres superposées sans changement d'app : interface système et claviers (actif et activés). */
+    private fun transientPackages(): Set<String> {
+        val result = mutableSetOf(SYSTEM_UI_PACKAGE)
+        runCatching {
+            getSystemService(InputMethodManager::class.java)?.enabledInputMethodList?.forEach {
+                result += it.packageName
+            }
+        }
+        Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+            ?.let { parseComponent(it) }
+            ?.let { result += it.first }
+        return result
+    }
+
+    /** Écran allumé et déverrouillé, réévalué sur SCREEN_OFF / SCREEN_ON / USER_PRESENT. */
+    private fun registerScreenReceiver() {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) = updateDeviceUsable()
+        }
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_USER_PRESENT)
+        }
+        ContextCompat.registerReceiver(this, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        screenReceiver = receiver
+        updateDeviceUsable()
+    }
+
+    private fun updateDeviceUsable() {
+        val interactive = getSystemService(PowerManager::class.java)?.isInteractive ?: true
+        val locked = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked ?: false
+        deviceUsable.value = interactive && !locked
     }
 
     override fun onInterrupt() {
@@ -63,10 +179,24 @@ class SwipeAccessibilityService : AccessibilityService() {
     }
 
     private fun release() {
+        if (connected.value === this) connected.value = null
+        controller?.stop()
+        controller = null
+        overlay?.hide()
+        overlay = null
+        notification?.cancel()
+        notification = null
         scope?.cancel()
         scope = null
         testJob = null
-        if (connected.value === this) connected.value = null
+        screenReceiver?.let { runCatching { unregisterReceiver(it) } }
+        screenReceiver = null
+    }
+
+    /** Republie la notification (par exemple après l'octroi de `POST_NOTIFICATIONS`). */
+    fun refreshNotification() {
+        val c = controller ?: return
+        notification?.update(c.state.value, c.swipesToday.value, c.userPaused.value)
     }
 
     /**

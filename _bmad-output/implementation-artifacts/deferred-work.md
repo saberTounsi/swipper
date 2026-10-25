@@ -31,3 +31,6 @@
 - source_spec: none
   summary: Guide des réglages Xiaomi/HyperOS dans l'app (démarrage auto, batterie sans restriction, verrouillage dans les récents).
   evidence: Constats du 2026-10-25 sur le Redmi ; séparé de la story 5 par l'utilisateur — à faire avec la story 6 (réglages).
+- source_spec: `_bmad-output/specs/spec-android-auto-swiper/stories/5-controle-automatisation.md`
+  summary: La règle « GestureDispatcher ne garde comme base de continueStroke que les traits acceptés » n'est pas testée.
+  evidence: Revue story 5 (#11). Demande Robolectric ou un test instrumenté.

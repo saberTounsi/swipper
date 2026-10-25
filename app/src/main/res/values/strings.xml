@@ -25,4 +25,30 @@
     <string name="test_result_completed">terminé</string>
     <string name="test_result_cancelled">annulé par le système</string>
     <string name="test_result_failed">refusé</string>
+    <string name="status_stopped">Service arrêté par le système</string>
+    <string name="status_stopped_body">Le service est activé dans les réglages, mais Android l\'a arrêté (fréquent sur HyperOS/MIUI). Touchez « Ouvrir les réglages », désactivez Swipper puis réactivez-le.</string>
+    <string name="action_open_settings">Ouvrir les réglages</string>
+
+    <string name="automation_title">Automatisation</string>
+    <string name="automation_state">État : %1$s</string>
+    <string name="automation_swipes_today">Swipes aujourd\'hui : %1$d</string>
+    <string name="automation_hint">La boucle ne swipe que lorsque Tinder ou Bumble est au premier plan ; elle se met en pause dès que vous en sortez.</string>
+    <string name="automation_error">Boucle arrêtée sur une erreur : %1$s</string>
+    <string name="action_start">Démarrer</string>
+    <string name="action_pause">Pause</string>
+    <string name="action_resume">Reprendre</string>
+    <string name="action_stop">Stop</string>
+    <string name="loop_state_idle">arrêtée</string>
+    <string name="loop_state_running">en cours</string>
+    <string name="loop_state_paused">en pause</string>
+    <string name="loop_state_resting">pause longue entre deux sessions</string>
+    <string name="loop_state_cap">plafond du jour atteint</string>
+    <string name="loop_paused_by_user">en pause (manuelle)</string>
+    <string name="loop_paused_waiting_target">en pause : ouvrez Tinder ou Bumble</string>
+
+    <string name="notification_channel_name">Automatisation</string>
+    <string name="notification_title">Swipper : %1$s</string>
+    <string name="notification_swipes_today">%1$d swipes aujourd\'hui</string>
+    <string name="overlay_move">Déplacer</string>
+    <string name="toast_loop_error">Swipper : boucle arrêtée (%1$s)</string>
 </resources>

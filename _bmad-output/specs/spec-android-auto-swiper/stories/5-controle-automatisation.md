@@ -2,9 +2,10 @@
 title: 'Story 5 — Boucle automatique et contrôle'
 type: 'feature'
 created: '2026-10-25'
-status: 'draft'
+status: 'done'
 route: 'dispatch'
 review_loop_iteration: 0
+baseline_commit: '915fc0629c0c57adb8c09aa4eb34f12e246ba75d'
 context:
   - '{project-root}/_bmad-output/specs/spec-android-auto-swiper/SPEC.md'
   - '{project-root}/_bmad-output/specs/spec-android-auto-swiper/architecture.md'
@@ -64,14 +65,14 @@ context:
 ## Tasks & Acceptance
 
 **Execution:**
-- [ ] `app/src/main/java/com/swipper/app/control/AutomationController.kt` -- boucle, états `StateFlow`, `start()/pause()/resume()/stop()`, dépendances injectées (`SwipeExecutor` suspend, `StateFlow<String?>` du paquet au premier plan, moteur, sélecteur) -- cœur testable
-- [ ] `app/src/main/java/com/swipper/app/control/TargetApps.kt` -- `com.tinder`, `com.bumble.app` -- apps cibles
-- [ ] `app/src/main/java/com/swipper/app/service/SwipeAccessibilityService.kt` -- paquet au premier plan, contrôleur, `CoroutineExceptionHandler`, overlay -- intégration
-- [ ] `app/src/main/java/com/swipper/app/control/FloatingControls.kt` -- overlay Play-Pause / Stop, dans le haut de l'écran, déplaçable verticalement en option -- commande flottante
-- [ ] `app/src/main/java/com/swipper/app/control/AutomationNotification.kt` + `BroadcastReceiver` non exporté pour les actions + canal de notification -- commande par notification
-- [ ] `app/src/main/java/com/swipper/app/service/StrokeSequencer.kt` + test -- levée du doigt après refus -- report story 3
-- [ ] `app/src/main/java/com/swipper/app/ui/HomeScreen.kt`, `MainActivity.kt`, `strings.xml`, `AndroidManifest.xml` -- trois états du service, boutons Démarrer/Pause/Stop, état de la boucle, `POST_NOTIFICATIONS` -- UI
-- [ ] `app/src/test/java/com/swipper/app/control/AutomationControllerTest.kt` -- une méthode par ligne de la matrice concernant la boucle (8 premières + Exception) -- matrice I/O
+- [x] `app/src/main/java/com/swipper/app/control/AutomationController.kt` -- boucle, états `StateFlow`, `start()/pause()/resume()/stop()`, dépendances injectées (`SwipeExecutor` suspend, `StateFlow<String?>` du paquet au premier plan, moteur, sélecteur) -- cœur testable
+- [x] `app/src/main/java/com/swipper/app/control/TargetApps.kt` -- `com.tinder`, `com.bumble.app` -- apps cibles
+- [x] `app/src/main/java/com/swipper/app/service/SwipeAccessibilityService.kt` -- paquet au premier plan, contrôleur, `CoroutineExceptionHandler`, overlay -- intégration
+- [x] `app/src/main/java/com/swipper/app/control/FloatingControls.kt` -- overlay Play-Pause / Stop, dans le haut de l'écran, déplaçable verticalement en option -- commande flottante
+- [x] `app/src/main/java/com/swipper/app/control/AutomationNotification.kt` + `BroadcastReceiver` non exporté pour les actions + canal de notification -- commande par notification
+- [x] `app/src/main/java/com/swipper/app/service/StrokeSequencer.kt` + test -- levée du doigt après refus -- report story 3
+- [x] `app/src/main/java/com/swipper/app/ui/HomeScreen.kt`, `MainActivity.kt`, `strings.xml`, `AndroidManifest.xml` -- trois états du service, boutons Démarrer/Pause/Stop, état de la boucle, `POST_NOTIFICATIONS` -- UI
+- [x] `app/src/test/java/com/swipper/app/control/AutomationControllerTest.kt` -- une méthode par ligne de la matrice concernant la boucle (8 premières + Exception) -- matrice I/O
 
 **Acceptance Criteria:**
 - Given Tinder ouvert et Démarrer, when on observe 2 minutes, then des swipes partent à intervalles irréguliers et le compteur de la notification augmente.
@@ -80,9 +81,43 @@ context:
 
 ## Implementation Notes
 
+- `SwipeExecutor.execute(direction)` : le plan (`GestureGenerator`, `SwipeZone.DEFAULT`, taille d'écran) et l'envoi (`GestureDispatcher`) sont faits dans le service ; le contrôleur reste du Kotlin pur.
+- Porte = app cible au premier plan ET écran allumé et déverrouillé ET pas de pause manuelle. Fermée pendant l'attente d'un `Swipe` ou pendant le geste → l'action est abandonnée (geste annulé, doigt levé par `StrokeSequencer`, non compté) ; à la réouverture, nouvel appel à `nextAction()`.
+- Écran / verrouillage : `PowerManager.isInteractive && !KeyguardManager.isKeyguardLocked`, réévalué par un receiver enregistré par le service sur `ACTION_SCREEN_OFF` / `ACTION_SCREEN_ON` / `ACTION_USER_PRESENT`, injecté dans le contrôleur en `StateFlow<Boolean>` (`deviceUsable`). Écran éteint ou verrouillé = comme quitter l'app cible (Paused + geste annulé).
+- `Rest` et `CapReached` sont des attentes purement temporelles : quitter l'app cible ou mettre en pause pendant ces attentes ne les interrompt pas (sinon la pause longue serait perdue) ; la porte s'applique à leur fin. `pause()` est accepté dans tout état non Idle.
+- Ces attentes visent une échéance de l'horloge injectée (`Clock`, heure murale), par tranches de `delay` ≤ 30 s : le `delay` Android suit l'uptime et s'allonge en veille profonde (sinon CapReached pourrait durer des heures après minuit).
+- Fin de l'attente `CapReached` → Idle (diagramme d'états « CapReached → Idle : minuit ») ; le compteur affiché est resynchronisé à ce moment et à chaque `start()` (0 si le jour du moteur est passé).
+- 5 swipes non aboutis (`Failed`/`Cancelled`) d'affilée → arrêt en Idle avec `error` ; un `Completed` remet le compte à zéro ; un swipe interrompu par la porte ne compte pas.
+- Exception : le contrôleur repasse en Idle, expose `error` (affiché sur l'accueil) et relance l'exception vers le `CoroutineExceptionHandler` du service (log + toast). Une exception d'une ancienne boucle déjà remplacée ne touche ni l'état ni `error` de la nouvelle session.
+- Paquet au premier plan (`foregroundFrom`, fonction pure testée) : ignorés l'interface système (`com.android.systemui` : volet, verrouillage, dialogues volume/alimentation), les claviers (méthode de saisie par défaut et méthodes activées) et les fenêtres de Swipper hors de ses activités `com.swipper.app.ui.*` (bouton flottant). Ces fenêtres se superposent sans que l'app cible émette d'événement à leur fermeture : les compter bloquerait la boucle en Paused.
+- Notification orpheline (processus tué sans `release()`) : une action reçue sans contrôleur retire la notification.
+- Swipes de test désactivés tant que la boucle n'est pas Idle (un `dispatchGesture` de test annulerait les traits de la boucle, et inversement).
+- Bouton flottant visible quand une app cible est au premier plan (pour Démarrer) ou tant que la boucle n'est pas Idle ; poignée ↕ pour le déplacer verticalement, bas du bouton bloqué au-dessus de 25 % de la hauteur.
+- `GestureDispatcher` : seul un trait accepté par `dispatchGesture` devient la base de `continueStroke`, sinon la levée après refus continuerait un trait jamais envoyé.
+- Compteur du jour et session : remis à zéro à chaque connexion du service (persistance = story 6).
+- Vérification émulateur (2026-10-25) : Démarrer hors app cible → « en pause : ouvrez Tinder ou Bumble », bouton flottant en haut à droite, notification persistante avec 2 actions ; Stop du bouton flottant → Idle, bouton et notification retirés. 90 tests unitaires verts. Reste : séance Tinder sur le Redmi (done_checkpoint).
+
 ## Spec Change Log
 
 ## Review Triage Log
+
+| # | Couche | Constat | Verdict | Route | Preuve |
+|---|---|---|---|---|---|
+| 1 | blind, edge | Volet de notifications, clavier ou dialogue système → boucle bloquée en pause alors que Tinder est visible | high | patch | Tout événement d'un autre paquet écrase le premier plan ; à la fermeture du volet, Tinder n'émet rien. Cas typique : utiliser Pause/Stop de la notification. |
+| 2 | blind | Écran éteint sans verrouillage : la boucle continue d'envoyer des gestes | medium | patch | Aucun événement à l'extinction ; nécessaire aussi une fois systemui ignoré (#1). |
+| 3 | blind | Swipe de test et boucle simultanés s'annulent mutuellement | medium | patch | Boutons de test actifs pendant la boucle. |
+| 4 | blind | Notification orpheline après la mort du processus ; actions sans effet | medium | patch | Notification non liée à un service de premier plan ; le récepteur ignore l'absence de contrôleur. |
+| 5 | blind, edge | Refus en boucle : « en cours » indéfiniment avec 0 swipe | medium | patch | Les `Failed` sont ignorés sans limite. |
+| 6 | blind, verif | Test du Stop en < 500 ms tautologique | medium | patch | Avance 499 ms puis vérifie < 500. |
+| 7 | blind, verif | Tests manquants (pause/stop pendant Resting, start en double, bascule du compteur, `ServiceStatus`, filtre du premier plan) | medium | patch | Régressions possibles sans échec de test. |
+| 8 | edge | `delay()` en temps de fonctionnement : pause et attente du plafond rallongées par la veille profonde | medium | patch | `Handler.postDelayed` ne compte pas la veille ; CapReached peut durer des heures après minuit. |
+| 9 | edge, verif | Compteur du jour périmé après minuit (pause, plafond → Idle) | low | patch | Resynchronisé seulement après `nextAction()`. |
+| 10 | edge | Erreur d'un ancien job affichée dans la nouvelle session | low | patch | Garde directe sur le job courant. |
+| 11 | verif | « Dernier trait accepté » de `GestureDispatcher` non testé | medium | defer | Nécessite le SDK Android (pas de Robolectric). |
+| 12 | blind, edge | Bouton flottant : hauteur d'écran différente, rotation, barre d'état, icônes de Tinder | low | rejet | Tinder et Bumble sont en portrait ; bouton déplaçable. |
+| 13 | blind | Permission de notification demandée seulement depuis l'app et redemandée après rotation | low | rejet | La boucle fonctionne sans ; demande non bloquante. |
+| 14 | blind | Faux « arrêté par le système » bref pendant l'activation | low | rejet | Transitoire de quelques centaines de ms ; une période de grâce ajoute de la complexité. |
+| 15 | edge | Échec de `addView` réessayé à chaque changement d'état | low | rejet | Cas non observé ; seulement des logs. |
 
 ## Design Notes
 
