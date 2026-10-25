@@ -18,6 +18,13 @@ sealed interface Action {
     /** Attendre [delayMs] puis swiper. */
     data class Swipe(val delayMs: Long) : Action
 
+    /**
+     * À la place d'un [Swipe] (story 7) : attendre [delayMs], ouvrir le profil (tap à la
+     * position calibrée), le « lire » [readMs], revenir en arrière, attendre [backPauseMs],
+     * puis swiper normalement.
+     */
+    data class OpenProfile(val readMs: Long, val delayMs: Long = 0, val backPauseMs: Long = 0) : Action
+
     /** Fin de session : pause longue de [durationMs] avant la session suivante. */
     data class Rest(val durationMs: Long) : Action
 
@@ -73,12 +80,15 @@ data class BehaviorState(
  *   en était ; une cible hors de [BehaviorConfig.sessionMin ; BehaviorConfig.sessionMax]
  *   (réglages modifiés depuis) est tirée à nouveau et la session repart de zéro. Une pause
  *   longue restaurée ([BehaviorState.restUntil]) est respectée jusqu'à son terme.
+ * @param profileAvailable `true` si l'app au premier plan a une position d'ouverture de
+ *   profil calibrée ; sinon [Action.OpenProfile] n'est jamais renvoyé.
  */
 class BehaviorEngine(
     private val config: BehaviorConfig,
     private val random: Random,
     private val clock: Clock,
     initialState: BehaviorState? = null,
+    private val profileAvailable: () -> Boolean = { false },
 ) {
     /** Nombre de swipes enregistrés pendant le jour local [day]. */
     var swipesToday: Int = initialState?.swipesToday ?: 0
@@ -117,7 +127,9 @@ class BehaviorEngine(
     /**
      * Décide de la prochaine action. Ordre : 1) changement de jour → remise à zéro ;
      * 2) plafond → [Action.CapReached] ; 3) hors plage horaire → [Action.OutsideHours] ;
-     * 3 bis) pause restaurée non finie → [Action.Rest] du temps restant ; 4) session terminée → [Action.Rest] et nouvelle session ; 5) sinon [Action.Swipe].
+     * 3 bis) pause restaurée non finie → [Action.Rest] du temps restant ; 4) session terminée → [Action.Rest] et nouvelle session ; 5) sinon
+     * [Action.OpenProfile] avec la probabilité [BehaviorConfig.profileOpenProbability] si
+     * [profileAvailable], ou [Action.Swipe].
      * Hors plage, la session en cours est close : la reprise en démarre une nouvelle.
      *
      * Chaque appel engage l'action renvoyée (une fin de session remet la session à zéro
@@ -147,7 +159,18 @@ class BehaviorEngine(
             restoredRest = false
             return Action.Rest(rest)
         }
-        return Action.Swipe(drawDelay())
+        val delay = drawDelay()
+        // Tirage seulement si l'ouverture est possible : sinon la suite aléatoire est inchangée.
+        if (config.profileOpenProbability > 0.0 && profileAvailable() &&
+            random.nextDouble() < config.profileOpenProbability
+        ) {
+            return Action.OpenProfile(
+                readMs = uniformLong(config.profileReadMinMs, config.profileReadMaxMs),
+                delayMs = delay,
+                backPauseMs = uniformLong(config.profileBackMinMs, config.profileBackMaxMs),
+            )
+        }
+        return Action.Swipe(delay)
     }
 
     /** Enregistre un swipe réellement effectué (compté sur le jour local courant). */
@@ -228,6 +251,9 @@ class BehaviorEngine(
         val jitter = uniformLong(min, max)
         return Duration.between(now.toInstant(), opening.toInstant()).toMillis() + jitter
     }
+
+    /** Attente après un Retour de profil, dans [profileBackMinMs ; profileBackMaxMs]. */
+    fun drawProfileBackPauseMs(): Long = uniformLong(config.profileBackMinMs, config.profileBackMaxMs)
 
     private fun drawSessionTarget(): Int = random.nextInt(config.sessionMin, config.sessionMax + 1)
 

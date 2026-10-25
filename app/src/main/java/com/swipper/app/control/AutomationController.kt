@@ -36,6 +36,15 @@ fun interface SwipeExecutor {
 }
 
 /**
+ * Tape à la position calibrée d'ouverture de profil de [packageName] (story 7), par le
+ * même mécanisme que les swipes ; annulable. [DispatchResult.Failed] si l'app n'est pas
+ * calibrée.
+ */
+fun interface TapExecutor {
+    suspend fun tap(packageName: String?): DispatchResult
+}
+
+/**
  * Moteur, sélecteur et apps cibles d'une session, construits depuis les réglages à chaque
  * Démarrer (story 6).
  */
@@ -63,6 +72,10 @@ class SessionSetup(
  * @param setupProvider appelé à chaque [start] : remplace moteur, sélecteur et apps
  *   cibles (réglages et état sauvegardé) ; `null` = garder ceux du constructeur. S'il
  *   renvoie `null` (réglages pas encore lus), le démarrage est différé jusqu'à [setupReady].
+ * @param tapExecutor tap d'ouverture de profil ([Action.OpenProfile]).
+ * @param goBack retour arrière (`GLOBAL_ACTION_BACK`) après la lecture d'un profil ;
+ *   `false` si le système le refuse : la boucle s'arrête alors avec [BACK_REFUSED_ERROR].
+ * @param startAllowed `false` = [start] ignoré (ex. calibration en cours).
  * @param onStateChanged appelé avec l'état du moteur après chaque swipe enregistré et
  *   chaque décision qui le modifie (fin de session, changement de jour), pour le persister.
  */
@@ -77,6 +90,9 @@ class AutomationController(
     isTarget: (String?) -> Boolean = TargetApps::isTarget,
     private val setupProvider: (() -> SessionSetup?)? = null,
     private val onStateChanged: (BehaviorState) -> Unit = {},
+    private val tapExecutor: TapExecutor = TapExecutor { DispatchResult.Failed },
+    private val goBack: () -> Boolean = { false },
+    private val startAllowed: () -> Boolean = { true },
 ) {
     private var engine: BehaviorEngine = engine
     private var picker: DirectionPicker = picker
@@ -130,9 +146,16 @@ class AutomationController(
     /** Démarrer demandé avant que [setupProvider] ne puisse fournir une session. */
     private var startPending = false
 
+    /**
+     * Paquet dont un profil a été ouvert puis laissé ouvert (lecture interrompue, Stop compris) ;
+     * `null` sinon. Conservé d'une session à l'autre pendant toute la vie du contrôleur.
+     */
+    private var profileOpenIn: String? = null
+
     /** Démarre la boucle (sans effet si elle tourne déjà). Paused tant que la porte est fermée. */
     fun start() {
         if (job?.isActive == true) return
+        if (!startAllowed()) return
         if (setupProvider != null) {
             val setup = setupProvider.invoke()
             if (setup == null) {
@@ -213,6 +236,7 @@ class AutomationController(
     private suspend fun loop() {
         while (true) {
             awaitGate()
+            if (!closeLeftProfile()) return
             val action = engine.nextAction()
             syncSwipesToday() // bascule de jour éventuelle
             reportState() // fin de session ou changement de jour
@@ -222,24 +246,42 @@ class AutomationController(
                         delay(action.delayMs)
                         // Plage fermée pendant le délai : pas de swipe ; le prochain
                         // nextAction() renverra OutsideHours.
-                        if (engine.isInActiveHours(clock.now())) executor.execute(picker.pick()) else null
+                        if (canSwipeNow()) executor.execute(picker.pick()) else null
                     }
-                    when (result) {
-                        null -> Unit // interrompu par la porte ou la plage : ni compté ni échec
-                        DispatchResult.Completed -> {
-                            consecutiveFailures = 0
-                            engine.recordSwipe()
-                            syncSwipesToday()
-                            reportState()
-                        }
-                        DispatchResult.Failed, DispatchResult.Cancelled -> {
-                            if (++consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-                                toIdle()
-                                _error.value = "$MAX_CONSECUTIVE_FAILURES swipes refusés ou annulés d'affilée"
-                                return
+                    if (!handleSwipeResult(result)) return
+                }
+                is Action.OpenProfile -> {
+                    // Tap → lecture → Retour → attente → swipe normal, tout sous la porte : app
+                    // cible quittée (ou écran éteint, pause) pendant la lecture = pause, sans Retour
+                    // ([profileOpenIn] le garde en mémoire pour la reprise).
+                    val pkg = foregroundPackage.value
+                    var backRefused = false
+                    val result = whileGateOpen {
+                        delay(action.delayMs)
+                        if (!engine.isInActiveHours(clock.now())) return@whileGateOpen null
+                        // App changée pendant le délai : pas de tap, swipe normal.
+                        // Tap non abouti (ex. non calibré) : swipe normal, sans compter d'échec.
+                        if (foregroundPackage.value == pkg &&
+                            tapExecutor.tap(pkg) == DispatchResult.Completed
+                        ) {
+                            profileOpenIn = pkg
+                            delay(action.readMs)
+                            // Autre app cible au premier plan : pas de Retour chez elle (interrompu).
+                            if (foregroundPackage.value != pkg) return@whileGateOpen null
+                            if (!goBack()) {
+                                backRefused = true
+                                return@whileGateOpen null
                             }
+                            profileOpenIn = null
+                            delay(action.backPauseMs)
                         }
+                        if (canSwipeNow()) executor.execute(picker.pick()) else null
                     }
+                    if (backRefused) {
+                        stopOnBackRefused()
+                        return
+                    }
+                    if (!handleSwipeResult(result)) return
                 }
                 is Action.Rest -> {
                     _state.value = AutomationState.Resting
@@ -267,6 +309,65 @@ class AutomationController(
                 }
             }
         }
+    }
+
+    /**
+     * Profil laissé ouvert par une lecture interrompue ([profileOpenIn]) et app au premier
+     * plan : Retour puis l'attente habituelle, avant toute nouvelle décision. Jamais en pause
+     * (appelé porte ouverte, et annulé si elle se ferme). `false` si le Retour est refusé
+     * (boucle arrêtée).
+     */
+    private suspend fun closeLeftProfile(): Boolean {
+        val pkg = profileOpenIn ?: return true
+        if (foregroundPackage.value != pkg) return true
+        var refused = false
+        whileGateOpen {
+            if (!goBack()) {
+                refused = true
+                return@whileGateOpen
+            }
+            profileOpenIn = null
+            delay(engine.drawProfileBackPauseMs())
+        }
+        if (refused) stopOnBackRefused()
+        return !refused
+    }
+
+    /**
+     * Swipe possible maintenant : dans la plage, et pas sur un profil laissé ouvert dans l'app
+     * au premier plan (retour dans cette app pendant le délai : le tour suivant enverra Retour).
+     */
+    private fun canSwipeNow(): Boolean =
+        engine.isInActiveHours(clock.now()) && (profileOpenIn == null || foregroundPackage.value != profileOpenIn)
+
+    private fun stopOnBackRefused() {
+        toIdle()
+        _error.value = BACK_REFUSED_ERROR
+    }
+
+    /**
+     * Compte un swipe abouti, ou un échec ; `false` si la boucle doit s'arrêter
+     * ([MAX_CONSECUTIVE_FAILURES] échecs d'affilée). `null` = interrompu par la porte ou la
+     * plage : ni compté ni échec.
+     */
+    private fun handleSwipeResult(result: DispatchResult?): Boolean {
+        when (result) {
+            null -> Unit
+            DispatchResult.Completed -> {
+                consecutiveFailures = 0
+                engine.recordSwipe()
+                syncSwipesToday()
+                reportState()
+            }
+            DispatchResult.Failed, DispatchResult.Cancelled -> {
+                if (++consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                    toIdle()
+                    _error.value = "$MAX_CONSECUTIVE_FAILURES swipes refusés ou annulés d'affilée"
+                    return false
+                }
+            }
+        }
+        return true
     }
 
     /** Signale l'état du moteur s'il a changé depuis le dernier signalement. */
@@ -322,6 +423,9 @@ class AutomationController(
     companion object {
         /** Swipes non aboutis (Failed/Cancelled) d'affilée avant l'arrêt de la boucle. */
         const val MAX_CONSECUTIVE_FAILURES = 5
+
+        /** Erreur d'arrêt quand le Retour après une ouverture de profil est refusé. */
+        const val BACK_REFUSED_ERROR = "retour arrière refusé : profil peut-être resté ouvert"
 
         /** Tranche maximale d'attente des pauses longues, du plafond et des heures hors plage. */
         const val WAIT_CHUNK_MS = 30_000L

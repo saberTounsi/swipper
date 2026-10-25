@@ -715,4 +715,242 @@ class AutomationControllerTest {
         assertEquals(AutomationState.Idle, controller.state.value)
         scope.cancel()
     }
+
+    /**
+     * Contrôleur dont le moteur ouvre toujours le profil (lecture fixe de [readMs]) tant que
+     * [calibrated] ; résultats du tap ([tapResult]) et du Retour ([backResult]) injectables.
+     */
+    private class ProfileRig(test: TestScope, readMs: Long, start: String = "2026-06-15T10:00:00Z") {
+        var calibrated = true
+        var tapResult = DispatchResult.Completed
+        var backResult = true
+        val foreground = MutableStateFlow<String?>(TINDER)
+        val executor = FakeExecutor { test.currentTime }
+        val taps = mutableListOf<Pair<Long, String?>>()
+        val backs = mutableListOf<Long>()
+        private val clock = object : Clock {
+            override fun now(): Instant = Instant.parse(start).plusMillis(test.currentTime)
+            override val zone: ZoneId = ZoneOffset.UTC
+        }
+        val engine = BehaviorEngine(
+            BehaviorConfig(
+                dailyCap = 1_000_000, sessionMin = 1_000, sessionMax = 1_000,
+                profileOpenProbability = 1.0, profileReadMinMs = readMs, profileReadMaxMs = readMs,
+            ),
+            Random(5), clock, profileAvailable = { calibrated },
+        )
+        val scope = CoroutineScope(
+            test.backgroundScope.coroutineContext + SupervisorJob(test.backgroundScope.coroutineContext[Job]) +
+                StandardTestDispatcher(test.testScheduler),
+        )
+        val controller = AutomationController(
+            scope, engine, DirectionPicker(Random(11)), executor, foreground, clock,
+            tapExecutor = { pkg ->
+                taps += test.currentTime to pkg
+                delay(TAP_MS)
+                tapResult
+            },
+            goBack = {
+                backs += test.currentTime
+                backResult
+            },
+        )
+    }
+
+    @Test
+    fun `OpenProfile - tap, lecture 3 s, Retour, 0,6–1,5 s, swipe, un seul recordSwipe`() = runTest {
+        val r = ProfileRig(this, readMs = 3_000)
+        r.controller.start()
+        while (r.executor.completed == 0) {
+            advanceTimeBy(10)
+            runCurrent()
+        }
+        val (tapAt, pkg) = r.taps.first()
+        assertEquals(TINDER, pkg)
+        assertEquals(1, r.backs.size)
+        assertEquals(tapAt + TAP_MS + 3_000, r.backs.single())
+        val swipeAt = r.executor.starts.single()
+        assertTrue(swipeAt - r.backs.single() in 600L..1_500L, "attente après Retour ${swipeAt - r.backs.single()}")
+        assertEquals(1, r.engine.swipesToday)
+        assertEquals(1, r.controller.swipesToday.value)
+        r.scope.cancel()
+    }
+
+    @Test
+    fun `OpenProfile - quitter l'app pendant la lecture - Paused, pas de Retour, pas de swipe`() = runTest {
+        val r = ProfileRig(this, readMs = 3_000)
+        r.controller.start()
+        while (r.taps.isEmpty()) advanceTimeBy(10)
+        advanceTimeBy(TAP_MS + 1_000) // en pleine lecture
+        runCurrent()
+        r.foreground.value = OTHER
+        runCurrent()
+        assertEquals(AutomationState.Paused, r.controller.state.value)
+        advanceTimeBy(5 * MINUTE)
+        runCurrent()
+        assertTrue(r.backs.isEmpty(), "Retour envoyé hors de l'app cible")
+        assertTrue(r.executor.starts.isEmpty(), "swipe hors de l'app cible")
+        assertEquals(0, r.engine.swipesToday)
+        r.scope.cancel()
+    }
+
+    @Test
+    fun `OpenProfile non disponible - uniquement des swipes, jamais de tap`() = runTest {
+        val r = ProfileRig(this, readMs = 3_000)
+        r.calibrated = false
+        r.controller.start()
+        advanceTimeBy(2 * MINUTE)
+        runCurrent()
+        assertTrue(r.executor.completed > 5)
+        assertTrue(r.taps.isEmpty())
+        assertTrue(r.backs.isEmpty())
+        r.scope.cancel()
+    }
+
+    /** Avance par pas de 10 ms jusqu'à [cond] (au plus 10 min). */
+    private fun TestScope.advanceUntil(cond: () -> Boolean) {
+        var guard = 0
+        while (!cond()) {
+            advanceTimeBy(10)
+            runCurrent()
+            check(++guard < 60_000) { "condition jamais atteinte" }
+        }
+    }
+
+    @Test
+    fun `OpenProfile - pause pendant la lecture puis reprise - Retour d'abord, puis swipe`() = runTest {
+        val r = ProfileRig(this, readMs = 3_000)
+        r.controller.start()
+        advanceUntil { r.taps.isNotEmpty() }
+        r.calibrated = false // la suite : swipes seulement
+        advanceTimeBy(TAP_MS + 1_000)
+        runCurrent()
+        r.controller.pause()
+        runCurrent()
+        advanceTimeBy(5 * MINUTE)
+        runCurrent()
+        assertTrue(r.backs.isEmpty(), "Retour envoyé en pause")
+        assertTrue(r.executor.starts.isEmpty())
+
+        r.controller.resume()
+        runCurrent()
+        assertEquals(1, r.backs.size, "Retour dès la reprise")
+        advanceUntil { r.executor.completed > 0 }
+        val firstSwipe = r.executor.starts.first()
+        assertTrue(firstSwipe - r.backs.single() >= 600, "swipe ${firstSwipe - r.backs.single()} ms après le Retour")
+        assertEquals(1, r.taps.size)
+        r.scope.cancel()
+    }
+
+    @Test
+    fun `OpenProfile - Retour refusé - Idle avec erreur, plus aucun geste`() = runTest {
+        val r = ProfileRig(this, readMs = 3_000)
+        r.backResult = false
+        r.controller.start()
+        advanceUntil { r.backs.isNotEmpty() }
+        runCurrent()
+        assertEquals(AutomationState.Idle, r.controller.state.value)
+        assertEquals(AutomationController.BACK_REFUSED_ERROR, r.controller.error.value)
+        advanceTimeBy(5 * MINUTE)
+        runCurrent()
+        assertEquals(1, r.taps.size)
+        assertEquals(1, r.backs.size)
+        assertTrue(r.executor.starts.isEmpty())
+        r.scope.cancel()
+    }
+
+    @Test
+    fun `OpenProfile - passage à Bumble pendant le délai - pas de tap, swipe normal`() = runTest {
+        val r = ProfileRig(this, readMs = 3_000)
+        r.controller.start()
+        runCurrent() // décision prise pour Tinder, délai en cours
+        r.foreground.value = BUMBLE
+        r.calibrated = false
+        advanceUntil { r.executor.completed > 0 }
+        assertTrue(r.taps.isEmpty(), "tap après changement d'app : ${r.taps}")
+        assertTrue(r.backs.isEmpty())
+        assertEquals(1, r.engine.swipesToday)
+        r.scope.cancel()
+    }
+
+    @Test
+    fun `OpenProfile - passage à Bumble pendant la lecture - pas de Retour dans Bumble, Retour au retour dans Tinder`() =
+        runTest {
+            val r = ProfileRig(this, readMs = 3_000)
+            r.controller.start()
+            advanceUntil { r.taps.isNotEmpty() }
+            r.calibrated = false
+            advanceTimeBy(TAP_MS + 1_000)
+            runCurrent()
+            r.foreground.value = BUMBLE
+            advanceTimeBy(2 * MINUTE)
+            runCurrent()
+            assertTrue(r.backs.isEmpty(), "Retour envoyé dans Bumble")
+            assertTrue(r.executor.completed > 0, "la boucle continue dans Bumble")
+
+            r.foreground.value = TINDER
+            runCurrent()
+            val startsAtReturn = r.executor.starts.size
+            advanceUntil { r.backs.isNotEmpty() }
+            assertEquals(startsAtReturn, r.executor.starts.size, "geste dans Tinder avant le Retour")
+            val back = r.backs.single()
+            advanceUntil { r.executor.starts.any { it > back } }
+            assertTrue(r.executor.starts.first { it > back } - back >= 600)
+            r.scope.cancel()
+        }
+
+    @Test
+    fun `OpenProfile - tap non abouti - swipe normal, sans arrêt pour échecs`() = runTest {
+        val r = ProfileRig(this, readMs = 3_000)
+        r.tapResult = DispatchResult.Failed
+        r.controller.start()
+        advanceTimeBy(3 * MINUTE)
+        runCurrent()
+        assertTrue(r.taps.size > AutomationController.MAX_CONSECUTIVE_FAILURES, "${r.taps.size} taps")
+        assertTrue(r.backs.isEmpty())
+        assertEquals(AutomationState.Running, r.controller.state.value)
+        assertEquals(null, r.controller.error.value)
+        assertEquals(r.executor.completed, r.engine.swipesToday)
+        assertTrue(r.executor.completed >= r.taps.size - 1)
+        r.scope.cancel()
+    }
+
+    @Test
+    fun `OpenProfile qui déborde la fin de plage - aucun tap ni swipe après la fermeture, puis OutsideHours`() = runTest {
+        // Plage 9 h–23 h (UTC) ; 23:00 = 2 000 ms de temps virtuel.
+        val r = ProfileRig(this, readMs = 3_000, start = "2026-06-15T22:59:58Z")
+        r.controller.start()
+        advanceUntil { r.controller.state.value == AutomationState.OutsideHours }
+        assertTrue(r.taps.all { it.first < 2_000 }, "tap après la fermeture : ${r.taps}")
+        assertTrue(r.executor.starts.isEmpty(), "swipe après la fermeture : ${r.executor.starts}")
+        r.scope.cancel()
+    }
+
+    @Test
+    fun `OpenProfile - Stop pendant la lecture puis Démarrer dans la même app - Retour d'abord, puis swipe`() = runTest {
+        val r = ProfileRig(this, readMs = 3_000)
+        r.controller.start()
+        advanceUntil { r.taps.isNotEmpty() }
+        r.calibrated = false
+        advanceTimeBy(TAP_MS + 1_000)
+        runCurrent()
+        r.controller.stop()
+        advanceTimeBy(MINUTE)
+        runCurrent()
+        assertTrue(r.backs.isEmpty(), "Retour envoyé après Stop")
+
+        r.controller.start()
+        runCurrent()
+        assertEquals(1, r.backs.size, "Retour dès le Démarrer")
+        assertTrue(r.executor.starts.isEmpty())
+        advanceUntil { r.executor.completed > 0 }
+        assertTrue(r.executor.starts.first() - r.backs.single() >= 600)
+        r.scope.cancel()
+    }
 }
+
+/** Paquet de Bumble. */
+private const val BUMBLE = "com.bumble.app"
+
+/** Durée d'un tap du faux exécuteur. */
+private const val TAP_MS = 100L

@@ -28,6 +28,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.swipper.app.R
 import com.swipper.app.control.AutomationController
 import com.swipper.app.control.AutomationState
+import com.swipper.app.control.TargetApps
 import com.swipper.app.gesture.Direction
 import com.swipper.app.service.SwipeAccessibilityService
 import com.swipper.app.service.accessibilityServiceEnabledFlow
@@ -116,6 +117,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                             onBack = { showSettings = false },
+                            onCalibrate = ::startCalibration,
                         )
                     } else {
                         HomeScreen(
@@ -156,6 +158,20 @@ class MainActivity : ComponentActivity() {
         ) {
             notificationPermissionAsked = true
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    /**
+     * Calibration de l'ouverture de profil (story 7) : le service attend que l'utilisateur
+     * ouvre l'app, puis affiche le calque.
+     */
+    private fun startCalibration(packageName: String) {
+        val label = TargetApps.label(packageName)
+        val armed = SwipeAccessibilityService.instance.value?.startCalibration(packageName, label) == true
+        if (armed) {
+            Toast.makeText(this, getString(R.string.toast_calibration_armed, label), Toast.LENGTH_LONG).show()
+        } else {
+            Toast.makeText(this, R.string.toast_service_inactive, Toast.LENGTH_SHORT).show()
         }
     }
 

@@ -23,17 +23,22 @@ import com.swipper.app.behavior.SystemClock
 import com.swipper.app.control.AutomationController
 import com.swipper.app.control.AutomationNotification
 import com.swipper.app.control.AutomationState
+import com.swipper.app.control.CalibrationOverlay
 import com.swipper.app.control.FloatingControls
 import com.swipper.app.control.SessionSetup
 import com.swipper.app.control.TargetApps
 import com.swipper.app.decision.DirectionPicker
 import com.swipper.app.gesture.Direction
+import com.swipper.app.gesture.FractionPoint
 import com.swipper.app.gesture.GestureGenerator
 import com.swipper.app.gesture.ScreenSize
 import com.swipper.app.gesture.SwipeZone
+import com.swipper.app.gesture.TapGenerator
 import com.swipper.app.settings.Settings as UserSettings
 import com.swipper.app.settings.SettingsRepository
+import java.io.IOException
 import kotlin.random.Random
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,20 +50,26 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Service d'accessibilité de Swipper.
  *
  * Il ne lit pas l'écran. Il suit le paquet au premier plan (`TYPE_WINDOW_STATE_CHANGED`),
  * porte l'[AutomationController] de la session (story 5), le bouton flottant et la
- * notification, et exécute des swipes de test ([testSwipe]) via [GestureDispatcher].
+ * notification, et exécute des swipes de test ([testSwipe]) via [GestureDispatcher]. Il
+ * porte aussi la calibration de l'ouverture de profil ([startCalibration], story 7).
  */
 class SwipeAccessibilityService : AccessibilityService() {
 
     private var scope: CoroutineScope? = null
     private var testJob: Job? = null
     private val generator = GestureGenerator(Random.Default)
+    private val tapGenerator = TapGenerator(Random.Default)
+    private var calibration: CalibrationOverlay? = null
+    private var calibrationJob: Job? = null
     private val foreground = MutableStateFlow<String?>(null)
     private val deviceUsable = MutableStateFlow(true)
     private var screenReceiver: BroadcastReceiver? = null
@@ -101,8 +112,12 @@ class SwipeAccessibilityService : AccessibilityService() {
             engine = BehaviorEngine(UserSettings().toBehaviorConfig(), Random.Default, SystemClock),
             picker = DirectionPicker(Random.Default),
             executor = { direction ->
-                val plan = generator.plan(screenSize(), SwipeZone.DEFAULT, direction)
-                GestureDispatcher(this).execute(plan)
+                if (calibrating()) {
+                    DispatchResult.Failed // le geste toucherait le calque de calibration
+                } else {
+                    val plan = generator.plan(screenSize(), SwipeZone.DEFAULT, direction)
+                    GestureDispatcher(this).execute(plan)
+                }
             },
             foregroundPackage = foreground,
             clock = SystemClock,
@@ -112,6 +127,22 @@ class SwipeAccessibilityService : AccessibilityService() {
             onStateChanged = { state ->
                 loaded?.state = state
                 repository.saveBehaviorStateAsync(state)
+            },
+            tapExecutor = { pkg ->
+                val point = currentSettings().profilePoint(pkg)
+                if (point == null || calibrating()) {
+                    DispatchResult.Failed
+                } else {
+                    GestureDispatcher(this).execute(tapGenerator.plan(screenSize(), point))
+                }
+            },
+            goBack = { performGlobalAction(GLOBAL_ACTION_BACK) },
+            // Démarrer (notification, bouton flottant) pendant une calibration : refusé, sinon
+            // chaque geste échouerait sur le calque.
+            startAllowed = {
+                val ok = !calibrating()
+                if (!ok) toast(R.string.toast_calibration_in_progress)
+                ok
             },
         )
         controller = c
@@ -133,6 +164,7 @@ class SwipeAccessibilityService : AccessibilityService() {
         notification = n
         val o = FloatingControls(this, c)
         overlay = o
+        calibration = CalibrationOverlay(this, ::screenSize)
         s.launch {
             combine(c.state, c.swipesToday, c.userPaused, c.resumeAt) { st, count, paused, resume ->
                 n.update(st, count, paused, resume, c.zone)
@@ -163,7 +195,11 @@ class SwipeAccessibilityService : AccessibilityService() {
         val l = loaded ?: return null
         val settings = l.settings.orDefaults()
         return SessionSetup(
-            engine = BehaviorEngine(settings.toBehaviorConfig(), Random.Default, SystemClock, l.state),
+            // Ouverture de profil possible seulement si l'app au premier plan est calibrée
+            // (calibration lue en direct : une calibration faite entre-temps compte).
+            engine = BehaviorEngine(settings.toBehaviorConfig(), Random.Default, SystemClock, l.state) {
+                currentSettings().profilePoint(foreground.value) != null
+            },
             picker = DirectionPicker(Random.Default, settings.rightRatio),
             isTarget = { pkg -> TargetApps.isTarget(pkg, settings.allowedPackages) },
         )
@@ -236,6 +272,10 @@ class SwipeAccessibilityService : AccessibilityService() {
         controller = null
         overlay?.hide()
         overlay = null
+        calibrationJob?.cancel()
+        calibrationJob = null
+        calibration?.hide()
+        calibration = null
         notification?.cancel()
         notification = null
         scope?.cancel()
@@ -245,6 +285,65 @@ class SwipeAccessibilityService : AccessibilityService() {
         screenReceiver?.let { runCatching { unregisterReceiver(it) } }
         screenReceiver = null
     }
+
+    private fun calibrating(): Boolean = calibrationJob?.isActive == true || calibration?.isShowing == true
+
+    /**
+     * Calibration de l'ouverture de profil de [packageName] : arrête la session en cours (ses
+     * gestes toucheraient le calque), attend que l'utilisateur ouvre l'app (au plus
+     * [CALIBRATION_WAIT_MS]), affiche le calque, puis enregistre la position touchée pour
+     * cette app. Retour, « Annuler » ou un changement d'app annulent sans rien enregistrer.
+     * Un nouvel appel remplace la calibration en cours. Renvoie `false` si le service n'est
+     * pas connecté ou si [packageName] n'est pas une app cible connue.
+     */
+    fun startCalibration(packageName: String, appLabel: String): Boolean {
+        val s = scope ?: return false
+        val overlayView = calibration ?: return false
+        if (packageName !in TargetApps.PACKAGES) return false
+        controller?.stop()
+        calibrationJob?.cancel()
+        overlayView.hide()
+        val repository = SettingsRepository.get(this)
+        calibrationJob = s.launch {
+            val opened = withTimeoutOrNull(CALIBRATION_WAIT_MS) { foreground.first { it == packageName } }
+            if (opened == null) {
+                toast(R.string.toast_calibration_expired)
+                return@launch
+            }
+            controller?.stop() // Démarrer pendant l'attente
+            val result = CompletableDeferred<FractionPoint?>()
+            val shown = overlayView.show(appLabel, onPoint = { result.complete(it) }, onCancel = { result.complete(null) })
+            if (!shown) {
+                toast(R.string.toast_calibration_failed)
+                return@launch
+            }
+            try {
+                // Une autre app au premier plan (Accueil, récentes) annule la calibration.
+                val left = launch {
+                    foreground.first { it != packageName }
+                    result.complete(null)
+                }
+                val point = result.await()
+                left.cancel()
+                if (point == null) {
+                    toast(R.string.toast_calibration_cancelled)
+                    return@launch
+                }
+                try {
+                    repository.saveProfilePoint(packageName, point)
+                    toast(R.string.toast_calibration_saved)
+                } catch (e: IOException) {
+                    Log.w(TAG, "Enregistrement de la calibration impossible", e)
+                    toast(R.string.toast_calibration_failed)
+                }
+            } finally {
+                overlayView.hide()
+            }
+        }
+        return true
+    }
+
+    private fun toast(message: Int) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
 
     /** Republie la notification (par exemple après l'octroi de `POST_NOTIFICATIONS`). */
     fun refreshNotification() {
@@ -298,6 +397,9 @@ class SwipeAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val TAG = "SwipeService"
+
+        /** Attente maximale de l'ouverture de l'app à calibrer. */
+        private const val CALIBRATION_WAIT_MS = 120_000L
 
         private val connected = MutableStateFlow<SwipeAccessibilityService?>(null)
 

@@ -24,6 +24,12 @@ package com.swipper.app.behavior
  * @property resumeJitterMinMs décalage aléatoire minimal ajouté à l'ouverture de la plage
  *   lors d'une reprise (hors plage ou plafond).
  * @property resumeJitterMaxMs décalage aléatoire maximal de la reprise.
+ * @property profileOpenProbability probabilité qu'une ouverture de profil remplace un swipe
+ *   (story 7), dans [0 ; 1] ; seulement si l'app au premier plan a une position calibrée.
+ * @property profileReadMinMs durée minimale de « lecture » d'un profil ouvert.
+ * @property profileReadMaxMs durée maximale de lecture.
+ * @property profileBackMinMs attente minimale entre le retour arrière et le swipe.
+ * @property profileBackMaxMs attente maximale entre le retour arrière et le swipe.
  *
  * @throws IllegalArgumentException si une valeur est ≤ 0, si un min dépasse son max,
  *   si la probabilité n'est pas dans [0 ; 1], si la médiane sort de [delayMinMs ; delayMaxMs],
@@ -47,6 +53,11 @@ data class BehaviorConfig(
     val activeEndMinute: Int = 23 * 60,
     val resumeJitterMinMs: Long = 2 * MINUTE_MS,
     val resumeJitterMaxMs: Long = 45 * MINUTE_MS,
+    val profileOpenProbability: Double = 0.08,
+    val profileReadMinMs: Long = 2_000,
+    val profileReadMaxMs: Long = 6_000,
+    val profileBackMinMs: Long = 600,
+    val profileBackMaxMs: Long = 1_500,
 ) {
     init {
         require(delayMedianMs > 0) { "delayMedianMs doit être > 0 (reçu $delayMedianMs)" }
@@ -85,6 +96,15 @@ data class BehaviorConfig(
         require(resumeJitterMaxMs >= 0) { "resumeJitterMaxMs doit être ≥ 0 (reçu $resumeJitterMaxMs)" }
         require(resumeJitterMinMs <= resumeJitterMaxMs) {
             "resumeJitterMinMs ($resumeJitterMinMs) doit être ≤ resumeJitterMaxMs ($resumeJitterMaxMs)"
+        }
+        require(profileOpenProbability in 0.0..1.0) {
+            "profileOpenProbability doit être dans [0 ; 1] (reçu $profileOpenProbability)"
+        }
+        require(profileReadMinMs > 0 && profileReadMinMs <= profileReadMaxMs) {
+            "profileReadMinMs ($profileReadMinMs) doit être > 0 et ≤ profileReadMaxMs ($profileReadMaxMs)"
+        }
+        require(profileBackMinMs > 0 && profileBackMinMs <= profileBackMaxMs) {
+            "profileBackMinMs ($profileBackMinMs) doit être > 0 et ≤ profileBackMaxMs ($profileBackMaxMs)"
         }
     }
 

@@ -2,10 +2,12 @@ package com.swipper.app.settings
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.swipper.app.behavior.BehaviorState
 import com.swipper.app.control.TargetApps
+import com.swipper.app.gesture.FractionPoint
 import java.io.File
 import java.time.Instant
 import java.time.LocalDate
@@ -88,5 +90,39 @@ class SettingsRepositoryTest {
         repo.saveBehaviorState(BehaviorState(10, day))
         repeat(50) { i -> repo.saveBehaviorStateAsync(BehaviorState(11 + i, day, sessionSwipes = i)) }
         assertEquals(BehaviorState(60, day, sessionSwipes = 49), repo.currentBehaviorState())
+    }
+
+    @Test
+    fun `positions calibrées et probabilité d'ouverture - aller-retour, non écrasées par save`() = runBlocking {
+        val repo = SettingsRepository(store(), newScope())
+        assertEquals(emptyMap<String, FractionPoint>(), repo.currentSettings().profilePoints)
+        repo.saveProfilePoint(TargetApps.TINDER, FractionPoint(0.5f, 0.79f))
+        assertEquals(mapOf(TargetApps.TINDER to FractionPoint(0.5f, 0.79f)), repo.currentSettings().profilePoints)
+
+        // Enregistrement des réglages sans la position (formulaire ouvert avant la calibration).
+        repo.save(Settings(profileOpenPercent = 30))
+        val read = repo.currentSettings()
+        assertEquals(30, read.profileOpenPercent)
+        assertEquals(FractionPoint(0.5f, 0.79f), read.profilePoint(TargetApps.TINDER))
+        assertEquals(null, read.profilePoint(TargetApps.BUMBLE))
+
+        org.junit.jupiter.api.assertThrows<IllegalArgumentException> {
+            runBlocking { repo.saveProfilePoint("com.example", FractionPoint(0.5f, 0.5f)) }
+        }
+        Unit
+    }
+
+    @Test
+    fun `positions calibrées corrompues - ignorées sans exception`() = runBlocking {
+        val s = store()
+        val repo = SettingsRepository(s, newScope())
+        s.edit {
+            it[floatPreferencesKey("profile_x_${TargetApps.TINDER}")] = 1.5f
+            it[floatPreferencesKey("profile_y_${TargetApps.TINDER}")] = 0.5f
+            it[floatPreferencesKey("profile_x_${TargetApps.BUMBLE}")] = 0.5f // sans y
+        }
+        val read = repo.currentSettings()
+        assertEquals(emptyMap<String, FractionPoint>(), read.profilePoints)
+        assertEquals(Settings(), read)
     }
 }

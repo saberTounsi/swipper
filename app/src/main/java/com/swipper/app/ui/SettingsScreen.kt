@@ -47,6 +47,7 @@ import kotlin.math.roundToInt
  * @param saved réglages enregistrés, qui pré-remplissent le formulaire.
  * @param sessionRunning une session est en cours : l'écran rappelle que les changements
  *   s'appliqueront au prochain Démarrer.
+ * @param onCalibrate lance la calibration de l'ouverture de profil de l'app (nom de paquet).
  */
 @Composable
 fun SettingsScreen(
@@ -55,11 +56,15 @@ fun SettingsScreen(
     onSave: (Settings) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    onCalibrate: (String) -> Unit = {},
 ) {
-    var form by remember(saved) { mutableStateOf(SettingsForm.of(saved)) }
+    // Sans les positions calibrées : une calibration ne reconstruit pas le formulaire (saisies
+    // non enregistrées conservées) ; l'état de calibration s'affiche depuis [saved].
+    val savedForm = saved.copy(profilePoints = emptyMap())
+    var form by remember(savedForm) { mutableStateOf(SettingsForm.of(savedForm)) }
     val result = form.parse()
     val errors = (result as? ParseResult.Invalid)?.errors.orEmpty()
-    val dirty = result != ParseResult.Valid(saved)
+    val dirty = result != ParseResult.Valid(savedForm)
 
     Column(
         modifier = modifier
@@ -138,6 +143,35 @@ fun SettingsScreen(
             }
         }
         ErrorText(errors, Field.TargetApps)
+
+        Text(stringResource(R.string.settings_profile_title), style = MaterialTheme.typography.titleSmall)
+        val profileOpen = form.profileOpenPercent.toIntOrNull()?.coerceIn(Settings.PROFILE_OPEN_RANGE)
+            ?: saved.profileOpenPercent
+        Text(stringResource(R.string.settings_profile_open, profileOpen), style = MaterialTheme.typography.bodyMedium)
+        Slider(
+            value = profileOpen.toFloat(),
+            onValueChange = { form = form.copy(profileOpenPercent = it.roundToInt().toString()) },
+            valueRange = Settings.PROFILE_OPEN_RANGE.first.toFloat()..Settings.PROFILE_OPEN_RANGE.last.toFloat(),
+            steps = Settings.PROFILE_OPEN_RANGE.last - Settings.PROFILE_OPEN_RANGE.first - 1,
+        )
+        Text(stringResource(R.string.settings_profile_hint), style = MaterialTheme.typography.bodySmall)
+        for ((pkg, button) in listOf(
+            TargetApps.TINDER to R.string.settings_calibrate_tinder,
+            TargetApps.BUMBLE to R.string.settings_calibrate_bumble,
+        )) {
+            val point = saved.profilePoint(pkg)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(onClick = { onCalibrate(pkg) }) { Text(stringResource(button)) }
+                Text(
+                    if (point == null) {
+                        stringResource(R.string.settings_not_calibrated)
+                    } else {
+                        stringResource(R.string.settings_calibrated, (point.x * 100).roundToInt(), (point.y * 100).roundToInt())
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
 
         Button(
             onClick = { (result as? ParseResult.Valid)?.let { onSave(it.settings) } },
@@ -219,6 +253,7 @@ private fun errorMessage(error: FieldError): String = when (error.reason) {
         Field.DailyCap -> stringResource(R.string.settings_error_cap)
         Field.ActiveStart, Field.ActiveEnd -> stringResource(R.string.settings_error_time)
         Field.TargetApps -> stringResource(R.string.settings_error_no_target)
+        Field.ProfileOpen -> stringResource(R.string.settings_error_profile_open)
     }
 }
 

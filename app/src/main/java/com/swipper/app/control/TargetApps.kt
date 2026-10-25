@@ -14,6 +14,12 @@ object TargetApps {
     /** Noms de paquet de toutes les apps cibles connues (Tinder et Bumble). */
     val PACKAGES: Set<String> = setOf(TINDER, BUMBLE)
 
+    /** Nom affiché des apps cibles connues. */
+    private val LABELS: Map<String, String> = mapOf(TINDER to "Tinder", BUMBLE to "Bumble")
+
+    /** Nom affiché de [packageName] ; le nom de paquet lui-même s'il est inconnu. */
+    fun label(packageName: String): String = LABELS[packageName] ?: packageName
+
     /** `true` si [packageName] est une app cible connue. */
     fun isTarget(packageName: String?): Boolean = isTarget(packageName, PACKAGES)
 

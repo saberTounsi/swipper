@@ -82,6 +82,23 @@
     <string name="settings_error_rest">Nombre entier de minutes entre 1 et 1440</string>
     <string name="settings_error_cap">Nombre entier entre 1 et 10000</string>
     <string name="settings_error_time">Heure invalide (ex. 09:00)</string>
+    <string name="settings_error_profile_open">Entre 0 et 30 %</string>
+    <string name="settings_profile_title">Ouverture de profil</string>
+    <string name="settings_profile_open">Ouvrir un profil avant de swiper : %1$d %%</string>
+    <string name="settings_profile_hint">Seulement dans une app calibrée : touchez « Calibrer », ouvrez l\'app, puis touchez l\'endroit qui ouvre le profil (par exemple le nom ou l\'âge en bas de la carte).</string>
+    <string name="settings_calibrate_tinder">Calibrer Tinder</string>
+    <string name="settings_calibrate_bumble">Calibrer Bumble</string>
+    <string name="settings_not_calibrated">Non calibré</string>
+    <string name="settings_calibrated">Calibré (%1$d %% ; %2$d %%)</string>
+
+    <string name="calibration_instruction">Calibration %1$s : touchez l\'endroit qui ouvre le profil. Retour pour annuler.</string>
+    <string name="calibration_cancel">Annuler</string>
+    <string name="toast_calibration_armed">Ouvrez %1$s : le calque de calibration apparaîtra.</string>
+    <string name="toast_calibration_saved">Position du profil enregistrée</string>
+    <string name="toast_calibration_cancelled">Calibration annulée</string>
+    <string name="toast_calibration_expired">Calibration abandonnée : l\'app n\'a pas été ouverte</string>
+    <string name="toast_calibration_failed">Échec de la calibration</string>
+    <string name="toast_calibration_in_progress">Calibration en cours : terminez-la ou annulez-la avant de démarrer</string>
 
     <string name="xiaomi_title">Réglages Xiaomi recommandés</string>
     <string name="xiaomi_intro">HyperOS/MIUI arrête souvent les services en arrière-plan. Pour que Swipper reste actif :</string>

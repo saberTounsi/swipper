@@ -3,6 +3,7 @@ package com.swipper.app.settings
 import com.swipper.app.behavior.BehaviorConfig
 import com.swipper.app.behavior.BehaviorState
 import com.swipper.app.control.TargetApps
+import com.swipper.app.gesture.FractionPoint
 import java.time.LocalDate
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -26,6 +27,11 @@ import kotlin.math.roundToLong
  * @property activeStartMinute début de la plage horaire, en minutes depuis minuit.
  * @property activeEndMinute fin de la plage horaire, en minutes depuis minuit.
  * @property targetPackages apps cibles cochées, parmi [TargetApps.PACKAGES].
+ * @property profileOpenPercent probabilité d'ouvrir un profil avant de swiper, en %, dans
+ *   [0 ; 30] (story 7).
+ * @property profilePoints position calibrée d'ouverture de profil par app (fractions de
+ *   l'écran) ; une app absente n'ouvre jamais de profil. Enregistrée par la calibration
+ *   ([SettingsRepository.saveProfilePoint]), pas par l'écran de réglages.
  */
 data class Settings(
     val rightRatioPercent: Int = 70,
@@ -38,6 +44,8 @@ data class Settings(
     val activeStartMinute: Int = 9 * 60,
     val activeEndMinute: Int = 23 * 60,
     val targetPackages: Set<String> = TargetApps.PACKAGES,
+    val profileOpenPercent: Int = 8,
+    val profilePoints: Map<String, FractionPoint> = emptyMap(),
 ) {
     /** Erreurs de validation, vide si les réglages sont valides. Ne lève jamais d'exception. */
     fun validate(): List<FieldError> = buildList {
@@ -62,6 +70,7 @@ data class Settings(
             add(FieldError(Field.ActiveEnd, Reason.SameStartEnd))
         }
         if (targetPackages.none { it in TargetApps.PACKAGES }) add(FieldError(Field.TargetApps, Reason.NoTargetApp))
+        if (profileOpenPercent !in PROFILE_OPEN_RANGE) add(FieldError(Field.ProfileOpen, Reason.OutOfRange))
     }
 
     /** `true` si [validate] ne renvoie aucune erreur. */
@@ -84,8 +93,12 @@ data class Settings(
             dailyCap = dailyCap,
             activeStartMinute = activeStartMinute,
             activeEndMinute = activeEndMinute,
+            profileOpenProbability = profileOpenPercent / 100.0,
         )
     }
+
+    /** Position calibrée d'ouverture de profil de [packageName], ou `null`. */
+    fun profilePoint(packageName: String?): FractionPoint? = packageName?.let { profilePoints[it] }
 
     /** Ratio de swipes à droite pour le `DirectionPicker`, dans [0 ; 1]. */
     val rightRatio: Double get() = rightRatioPercent / 100.0
@@ -94,7 +107,7 @@ data class Settings(
     val allowedPackages: Set<String> get() = targetPackages intersect TargetApps.PACKAGES
 
     /** Ces réglages s'ils sont valides, sinon les réglages par défaut (données corrompues). */
-    fun orDefaults(): Settings = if (isValid) this else Settings()
+    fun orDefaults(): Settings = if (isValid) this else Settings(profilePoints = profilePoints)
 
     companion object {
         val RATIO_RANGE = 0..100
@@ -104,6 +117,7 @@ data class Settings(
         val REST_RANGE = 1..24 * 60
         val CAP_RANGE = 1..10_000
         val MINUTE_RANGE = 0 until 24 * 60
+        val PROFILE_OPEN_RANGE = 0..30
         private const val MINUTE_MS = 60_000L
     }
 }
@@ -111,6 +125,7 @@ data class Settings(
 /** Champ de l'écran de réglages. */
 enum class Field {
     RightRatio, DelayMedian, SessionMin, SessionMax, RestMin, RestMax, DailyCap, ActiveStart, ActiveEnd, TargetApps,
+    ProfileOpen,
 }
 
 /** Motif d'une erreur de saisie. */
@@ -146,6 +161,9 @@ data class SettingsForm(
     val activeStart: String,
     val activeEnd: String,
     val targetPackages: Set<String>,
+    val profileOpenPercent: String = Settings().profileOpenPercent.toString(),
+    /** Positions calibrées, recopiées telles quelles (non éditées par le formulaire). */
+    val profilePoints: Map<String, FractionPoint> = emptyMap(),
 ) {
     /** Réglages valides, ou la liste des erreurs (jamais d'exception). */
     fun parse(): ParseResult {
@@ -169,6 +187,8 @@ data class SettingsForm(
             activeStartMinute = minute(activeStart, Field.ActiveStart) ?: DEFAULTS.activeStartMinute,
             activeEndMinute = minute(activeEnd, Field.ActiveEnd) ?: DEFAULTS.activeEndMinute,
             targetPackages = targetPackages,
+            profileOpenPercent = int(profileOpenPercent, Field.ProfileOpen) ?: DEFAULTS.profileOpenPercent,
+            profilePoints = profilePoints,
         )
         // Un champ illisible n'est signalé qu'une fois (pas d'erreur dérivée de la valeur de repli).
         val unreadable = parseErrors.map { it.field }.toSet()
@@ -191,6 +211,8 @@ data class SettingsForm(
             activeStart = formatTimeOfDay(settings.activeStartMinute),
             activeEnd = formatTimeOfDay(settings.activeEndMinute),
             targetPackages = settings.targetPackages,
+            profileOpenPercent = settings.profileOpenPercent.toString(),
+            profilePoints = settings.profilePoints,
         )
     }
 }

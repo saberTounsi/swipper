@@ -3,6 +3,7 @@ package com.swipper.app.settings
 import com.swipper.app.behavior.BehaviorConfig
 import com.swipper.app.behavior.BehaviorState
 import com.swipper.app.control.TargetApps
+import com.swipper.app.gesture.FractionPoint
 import com.swipper.app.ui.isXiaomiFamily
 import java.time.LocalDate
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -172,5 +173,27 @@ class SettingsTest {
         assertFalse(isXiaomiFamily("Google"))
         assertFalse(isXiaomiFamily("samsung"))
         assertFalse(isXiaomiFamily(null))
+    }
+
+    @Test
+    fun `ouverture de profil - probabilité 0–30 %, défaut 8 %, positions recopiées par le formulaire`() {
+        assertEquals(0.08, Settings().toBehaviorConfig().profileOpenProbability, 1e-12)
+        assertEquals("8", defaultsForm.profileOpenPercent)
+        val zero = (defaultsForm.copy(profileOpenPercent = "0").parse() as ParseResult.Valid).settings
+        assertEquals(0.0, zero.toBehaviorConfig().profileOpenProbability)
+        val thirty = (defaultsForm.copy(profileOpenPercent = "30").parse() as ParseResult.Valid).settings
+        assertEquals(0.30, thirty.toBehaviorConfig().profileOpenProbability, 1e-12)
+        for (bad in listOf("31", "-1", "abc")) {
+            val result = defaultsForm.copy(profileOpenPercent = bad).parse()
+            assertEquals(ParseResult.Invalid(listOf(FieldError(Field.ProfileOpen, Reason.OutOfRange))), result, bad)
+        }
+
+        val calibrated = Settings(profilePoints = mapOf(TargetApps.TINDER to FractionPoint(0.5f, 0.79f)))
+        assertEquals(ParseResult.Valid(calibrated), SettingsForm.of(calibrated).parse())
+        assertEquals(FractionPoint(0.5f, 0.79f), calibrated.profilePoint(TargetApps.TINDER))
+        assertEquals(null, calibrated.profilePoint(TargetApps.BUMBLE))
+        assertEquals(null, calibrated.profilePoint(null))
+        // Réglages corrompus : défauts, mais la calibration est conservée.
+        assertEquals(calibrated.profilePoints, calibrated.copy(dailyCap = 0).orDefaults().profilePoints)
     }
 }

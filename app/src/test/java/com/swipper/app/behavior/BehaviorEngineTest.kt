@@ -47,6 +47,7 @@ class BehaviorEngineTest {
                 }
                 is Action.Rest -> clock.advance(a.durationMs)
                 is Action.CapReached -> error("plafond inattendu")
+                is Action.OpenProfile -> error("ouverture de profil inattendue")
                 is Action.OutsideHours -> clock.advance(a.waitMs)
             }
         }
@@ -82,6 +83,7 @@ class BehaviorEngineTest {
                     rests++
                 }
                 is Action.CapReached -> error("plafond inattendu")
+                is Action.OpenProfile -> error("ouverture de profil inattendue")
                 is Action.OutsideHours -> {
                     // Le moteur clôt la session hors plage : on vérifie au lieu de supposer.
                     assertEquals(0, engine.sessionSwipes)
@@ -144,6 +146,7 @@ class BehaviorEngineTest {
                 }
                 is Action.Rest -> clock.advance(a.durationMs)
                 is Action.CapReached -> cap = a
+                is Action.OpenProfile -> error("ouverture de profil inattendue")
                 is Action.OutsideHours -> clock.advance(a.waitMs)
             }
         }
@@ -191,6 +194,7 @@ class BehaviorEngineTest {
                 }
                 is Action.Rest -> Unit
                 is Action.CapReached -> error("plafond inattendu")
+                is Action.OpenProfile -> error("ouverture de profil inattendue")
                 is Action.OutsideHours -> error("hors plage inattendu")
             }
         }
@@ -259,6 +263,7 @@ class BehaviorEngineTest {
                         }
                         is Action.Rest -> clock.advance(a.durationMs)
                         is Action.CapReached -> clock.advance(a.waitMs)
+                        is Action.OpenProfile -> error("ouverture de profil inattendue")
                         is Action.OutsideHours -> clock.advance(a.waitMs)
                     }
                 }
@@ -550,5 +555,66 @@ class BehaviorEngineTest {
         assertEquals(LocalDate.of(2026, 6, 15), engine.day)
         assertThrows<IllegalArgumentException> { BehaviorState(0, LocalDate.of(2026, 6, 15), sessionSwipes = -1) }
         assertThrows<IllegalArgumentException> { BehaviorState(0, LocalDate.of(2026, 6, 15), sessionTarget = 0) }
+    }
+
+    @Test
+    fun `ouverture de profil - 8 % calibré donne 5–11 % d'OpenProfile parmi 1 000 actions de swipe`() {
+        val clock = FakeClock(paris(2026, 6, 15, 9))
+        val engine = BehaviorEngine(noCap, Random(3), clock, profileAvailable = { true })
+        var swipes = 0
+        var opens = 0
+        while (swipes + opens < 1_000) {
+            when (val a = engine.nextAction()) {
+                is Action.Swipe -> {
+                    swipes++
+                    clock.advance(a.delayMs)
+                    engine.recordSwipe()
+                }
+                is Action.OpenProfile -> {
+                    opens++
+                    assertTrue(a.readMs in 2_000L..6_000L, "lecture ${a.readMs}")
+                    assertTrue(a.backPauseMs in 600L..1_500L, "attente après retour ${a.backPauseMs}")
+                    assertTrue(a.delayMs in 800L..40_000L, "délai ${a.delayMs}")
+                    clock.advance(a.delayMs + a.readMs + a.backPauseMs)
+                    engine.recordSwipe()
+                }
+                is Action.Rest -> clock.advance(a.durationMs)
+                is Action.CapReached -> error("plafond inattendu")
+                is Action.OutsideHours -> clock.advance(a.waitMs)
+            }
+        }
+        assertTrue(opens in 50..110, "$opens ouvertures de profil sur 1 000")
+    }
+
+    @Test
+    fun `ouverture de profil - jamais sans calibration ni à probabilité 0`() {
+        for ((config, available) in listOf(noCap to false, noCap.copy(profileOpenProbability = 0.0) to true)) {
+            val clock = FakeClock(paris(2026, 6, 15, 9))
+            val engine = BehaviorEngine(config, Random(3), clock, profileAvailable = { available })
+            repeat(2_000) {
+                when (val a = engine.nextAction()) {
+                    is Action.Swipe -> {
+                        clock.advance(a.delayMs)
+                        engine.recordSwipe()
+                    }
+                    is Action.OpenProfile -> error("OpenProfile avec $config / calibré = $available")
+                    is Action.Rest -> clock.advance(a.durationMs)
+                    is Action.CapReached -> error("plafond inattendu")
+                    is Action.OutsideHours -> clock.advance(a.waitMs)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `ouverture de profil - disponibilité réévaluée à chaque décision`() {
+        val clock = FakeClock(paris(2026, 6, 15, 9))
+        var calibrated = true
+        val engine = BehaviorEngine(noCap.copy(profileOpenProbability = 1.0), Random(3), clock) { calibrated }
+        assertTrue(engine.nextAction() is Action.OpenProfile)
+        calibrated = false // ex. Bumble non calibré au premier plan
+        assertTrue(engine.nextAction() is Action.Swipe)
+        assertThrows<IllegalArgumentException> { BehaviorConfig(profileOpenProbability = 1.5) }
+        assertThrows<IllegalArgumentException> { BehaviorConfig(profileReadMinMs = 7_000) }
     }
 }
