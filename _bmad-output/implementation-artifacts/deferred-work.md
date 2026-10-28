@@ -40,3 +40,15 @@
 - source_spec: `_bmad-output/specs/spec-android-auto-swiper/stories/7-ouverture-de-profil.md`
   summary: Une calibration mal placée (sur la photo) fait défiler les photos puis le Retour sort de Tinder ; Swipper ne peut pas savoir si le profil s'est ouvert.
   evidence: Séance Redmi 2026-10-25. Pistes : consigne du calque plus explicite (« touchez la flèche ↑ du profil »), aperçu de la position enregistrée, ou désactiver l'ouverture de profil après 2 sorties d'app consécutives juste après un Retour.
+- source_spec: none
+  summary: BUG Bumble — Swipper tente d'ouvrir le profil (glissé vers le bas) alors que l'ouverture de profil est réglée à 0 %.
+  evidence: Test utilisateur sur Redmi (2026-10-28) ; découpé par l'utilisateur, lot 2 sur 4 (après l'écran allumé).
+- source_spec: none
+  summary: Calibration de l'ouverture de profil plus fiable (consigne « touchez la flèche ↑ », aperçu de la position, coupure auto après 2 sorties d'app juste après un Retour).
+  evidence: Séance Redmi 2026-10-25 ; découpé par l'utilisateur le 2026-10-28, lot 3 sur 4.
+- source_spec: none
+  summary: État « connecté » réel du service d'accessibilité (onServiceConnected/onUnbind) et affichage « service planté, à réactiver ».
+  evidence: Revue story 1 et logs HyperOS ; découpé par l'utilisateur le 2026-10-28, lot 4 sur 4.
+- source_spec: `_bmad-output/implementation-artifacts/spec-ecran-allume-pendant-swipe.md`
+  summary: Le câblage FloatingControls.render → FLAG_KEEP_SCREEN_ON → updateViewLayout n'est pas testé (seule la règle shouldKeepScreenOn l'est).
+  evidence: Revue (#5). Demande Robolectric ou un test instrumenté ; vérifié à la main sur le Redmi.

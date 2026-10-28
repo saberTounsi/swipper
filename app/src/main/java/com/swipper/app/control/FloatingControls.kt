@@ -17,11 +17,20 @@ import com.swipper.app.R
 import kotlin.math.roundToInt
 
 /**
+ * Vrai si l'écran doit rester allumé : seulement pendant que la boucle swipe (Running, sans
+ * pause manuelle). Pause longue, plafond, hors plage, app non cible et Stop laissent la veille.
+ */
+internal fun shouldKeepScreenOn(state: AutomationState, userPaused: Boolean): Boolean =
+    state == AutomationState.Running && !userPaused
+
+/**
  * Bouton flottant Play-Pause / Stop (CAP-5), en `TYPE_ACCESSIBILITY_OVERLAY` : aucune
  * permission « superposition ». Placé dans le haut de l'écran, entièrement au-dessus de
  * [MAX_BOTTOM_FRACTION] de la hauteur, donc hors de la bande où passent les swipes ;
  * la fenêtre n'occupe que la taille des boutons (`WRAP_CONTENT`), le reste de l'écran
  * reçoit les touches normalement. Déplaçable verticalement par la poignée, dans cette bande.
+ * Porte `FLAG_KEEP_SCREEN_ON` tant que la boucle swipe ([shouldKeepScreenOn]) : sans
+ * permission, et le drapeau part avec la fenêtre si le service est tué.
  *
  * À utiliser depuis le thread principal.
  */
@@ -51,10 +60,12 @@ class FloatingControls(
             hide()
             return
         }
+        // Avant show() : une fenêtre recréée part directement avec le bon drapeau.
+        applyKeepScreenOn(shouldKeepScreenOn(state, userPaused))
         if (root == null) show()
-        val running = state != AutomationState.Idle && !userPaused
+        val showPause = state != AutomationState.Idle && !userPaused
         playPause?.apply {
-            text = if (running) PAUSE_GLYPH else PLAY_GLYPH
+            text = if (showPause) PAUSE_GLYPH else PLAY_GLYPH
             contentDescription = service.getString(
                 when {
                     state == AutomationState.Idle -> R.string.action_start
@@ -76,6 +87,24 @@ class FloatingControls(
         playPause = null
         stop = null
         runCatching { wm.removeView(view) }
+    }
+
+    /** Ajoute ou retire `FLAG_KEEP_SCREEN_ON` ; ne relance la mise en page que s'il change. */
+    private fun applyKeepScreenOn(keepOn: Boolean) {
+        val flags = if (keepOn) {
+            params.flags or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        } else {
+            params.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON.inv()
+        }
+        if (flags == params.flags) return
+        val previous = params.flags
+        params.flags = flags
+        val view = root ?: return
+        // En cas d'échec, on remet l'ancien drapeau pour réessayer au prochain render().
+        runCatching { wm.updateViewLayout(view, params) }.onFailure {
+            params.flags = previous
+            Log.w(TAG, "Impossible de mettre à jour le maintien de l'écran", it)
+        }
     }
 
     @SuppressLint("ClickableViewAccessibility")
