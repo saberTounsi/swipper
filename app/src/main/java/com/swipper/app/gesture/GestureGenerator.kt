@@ -71,38 +71,41 @@ class GestureGenerator(private val random: Random) {
         if (sy + driftSign * drift !in 0.0..maxY) driftSign = -driftSign
         val ey = (sy + driftSign * drift).coerceIn(0.0, maxY)
 
-        // 3. Tracé : contrôles au 1/3 et 2/3 de la corde, décalés du même côté.
+        // 3. Tracé : premier contrôle au 1/3 de la corde mais à la hauteur du départ
+        // (tangente initiale horizontale : le doigt est pris pour un swipe de carte, pas
+        // pour un défilement vertical, ex. Bumble) ; second au 2/3, décalé de côté.
         val dx = ex - sx
         val dy = ey - sy
         val chord = hypot(dx, dy)
         val nx = -dy / chord
         val ny = dx / chord
-        val c1x0 = sx + dx / 3
-        val c1y0 = sy + dy / 3
+        val c1x = sx + dx / 3
         val c2x0 = sx + 2 * dx / 3
         val c2y0 = sy + 2 * dy / 3
-        var k1 = uniform(CONTROL_OFFSET_MIN, CONTROL_OFFSET_MAX) * w
         var k2 = uniform(CONTROL_OFFSET_MIN, CONTROL_OFFSET_MAX) * w
         var side = if (random.nextBoolean()) 1.0 else -1.0
-        // Les contrôles restent dans l'écran, donc toute la courbe aussi (enveloppe convexe).
-        fun cap(s: Double) = min(
-            maxOffset(c1x0, c1y0, s * nx, s * ny, maxX, maxY),
-            maxOffset(c2x0, c2y0, s * nx, s * ny, maxX, maxY),
-        )
+        // Les contrôles restent dans l'écran, donc toute la courbe aussi (enveloppe convexe) :
+        // c1 est entre sx et ex, à la hauteur sy ; seul c2 a besoin d'être borné.
+        fun cap(s: Double) = maxOffset(c2x0, c2y0, s * nx, s * ny, maxX, maxY)
         val capSide = cap(side)
         val capOther = cap(-side)
-        if (max(k1, k2) > capSide) {
-            if (max(k1, k2) <= capOther || capOther > capSide) side = -side
-            val c = max(capSide, capOther)
-            k1 = min(k1, c)
-            k2 = min(k2, c)
+        if (k2 > capSide) {
+            if (k2 <= capOther || capOther > capSide) side = -side
+            k2 = min(k2, max(capSide, capOther))
         }
-        val curve = Bezier(
+        fun curveFor(s: Double, k: Double) = Bezier(
             sx, sy,
-            c1x0 + side * k1 * nx, c1y0 + side * k1 * ny,
-            c2x0 + side * k2 * nx, c2y0 + side * k2 * ny,
+            c1x, sy,
+            c2x0 + s * k * nx, c2y0 + s * k * ny,
             ex, ey,
         )
+        var curve = curveFor(side, k2)
+        // Cas rare (petit écran, dérive et décalage max du même côté) : le début du tracé
+        // monte trop ; la courbure opposée le ramène vers l'horizontale.
+        if (curve.startSlope(sx, sy) > START_SLOPE_GUARD) {
+            val flipped = curveFor(-side, min(k2, cap(-side)))
+            if (flipped.startSlope(sx, sy) < curve.startSlope(sx, sy)) curve = flipped
+        }
 
         // 4. Vitesse : durées ~égales, frontières à la fraction de longueur E(τᵢ).
         val n = random.nextInt(MIN_SEGMENTS, MAX_SEGMENTS + 1)
@@ -143,7 +146,8 @@ class GestureGenerator(private val random: Random) {
                 val prev = ref[j]
                 val next = ref[j + 2]
                 val gap = min(hypot(px - prev.first, py - prev.second), hypot(next.first - px, next.second - py))
-                val amp = min(uniform(JITTER_MIN_PX, JITTER_MAX_PX), gap / 2)
+                // ≤ gap/4 : au départ (points serrés), le bruit ne rend pas le geste vertical.
+                val amp = min(uniform(JITTER_MIN_PX, JITTER_MAX_PX), gap / 4)
                 val sign = if (random.nextBoolean()) 1.0 else -1.0
                 val signed = if (jitterEnabled) sign * amp else 0.0
                 val qx = px + signed * nx
@@ -211,6 +215,21 @@ class GestureGenerator(private val random: Random) {
             return (a * x0 + b * x1 + c * x2 + d * x3) to (a * y0 + b * y1 + c * y2 + d * y3)
         }
 
+        /**
+         * Pente maximale |Δy| / |Δx| depuis ([x0] ; [y0]) des points de la courbe à moins de
+         * [START_CHECK_PX] du départ.
+         */
+        fun startSlope(x0: Double, y0: Double): Double {
+            var worst = 0.0
+            for (i in 1..ARC_SAMPLES) {
+                val (x, y) = pointAt(i.toDouble() / ARC_SAMPLES)
+                if (hypot(x - x0, y - y0) > START_CHECK_PX) break
+                val ax = abs(x - x0)
+                worst = max(worst, if (ax > 0.0) abs(y - y0) / ax else 0.0)
+            }
+            return worst
+        }
+
         /** Paramètre t correspondant à la fraction [f] de la longueur (interpolation linéaire). */
         fun tAtFraction(f: Double): Double {
             val total = lengths[ARC_SAMPLES]
@@ -257,7 +276,16 @@ class GestureGenerator(private val random: Random) {
         const val DRIFT_MIN = 0.04
         const val DRIFT_MAX = 0.12
 
-        /** Décalage perpendiculaire des points de contrôle, en fraction de la largeur. */
+        /** Distance au départ sur laquelle le tracé doit rester à dominante horizontale (px). */
+        const val START_CHECK_PX = 80.0
+
+        /**
+         * Pente de départ (|Δy| / |Δx|, courbe sans bruit) au-delà de laquelle la courbure est
+         * inversée ; marge sous 0,6 pour le tremblement.
+         */
+        const val START_SLOPE_GUARD = 0.45
+
+        /** Décalage perpendiculaire du second point de contrôle, en fraction de la largeur. */
         const val CONTROL_OFFSET_MIN = 0.02
         const val CONTROL_OFFSET_MAX = 0.08
 

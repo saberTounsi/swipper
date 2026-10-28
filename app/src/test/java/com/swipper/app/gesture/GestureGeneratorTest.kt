@@ -241,7 +241,7 @@ class GestureGeneratorTest {
                     val ddy = (sn.points[j].y - c.y).toDouble()
                     val d = hypot(ddx, ddy)
                     val gap = min(dist(sc.points[j - 1], c), dist(c, sc.points[j + 1]))
-                    assertTrue(d <= min(JITTER_MAX_PX, gap / 2) + eps, "déplacement $d > borne (écart $gap)")
+                    assertTrue(d <= min(JITTER_MAX_PX, gap / 4) + eps, "déplacement $d > borne (écart $gap)")
                     assertTrue(abs((ddx * cdx + ddy * cdy) / clen) <= eps, "bruit le long de la corde : $ddx, $ddy")
                     if (d > eps) displaced++
                     if (d >= JITTER_MIN_PX - eps) inRange++
@@ -353,6 +353,28 @@ class GestureGeneratorTest {
             }
         }
         assertTrue(curved >= 0.9 * all.size, "plans courbes : $curved / ${all.size}")
+    }
+
+    @Test
+    fun `depart a dominante horizontale`() {
+        // Android donne le geste au premier axe qui dépasse le seuil de toucher (~22 px) :
+        // un départ trop vertical fait défiler la carte de Bumble au lieu de la swiper.
+        // Plusieurs graines : le cas limite (petit écran, dérive et décalage max) est rare.
+        for (screen in listOf(phone, small)) {
+            for (seed in 100..119) {
+                for ((dir, p) in plans(count = 2000, screen = screen, seed = seed)) {
+                    var checked = 0
+                    for (pt in allPoints(p).drop(1)) {
+                        if (dist(p.start, pt) > 80.0) break
+                        checked++
+                        val ax = abs(pt.x - p.start.x)
+                        val ay = abs(pt.y - p.start.y)
+                        assertTrue(ay <= 0.6 * ax + eps, "$dir sur $screen, graine $seed : Δy=$ay, Δx=$ax")
+                    }
+                    assertTrue(checked > 0, "aucun point à moins de 80 px du départ")
+                }
+            }
+        }
     }
 
     @Test
