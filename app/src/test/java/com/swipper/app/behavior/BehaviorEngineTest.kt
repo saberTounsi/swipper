@@ -14,6 +14,10 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 
 /** Horloge simulée : avance seulement quand le test le demande. */
+
+/** Plage 9 h–23 h (défaut avant le 2026-10-31) : les tests d'horaires en dépendent. */
+private fun BehaviorConfig.day9to23() = copy(activeStartMinute = 9 * 60, activeEndMinute = 23 * 60)
+
 private class FakeClock(var instant: Instant, override val zone: ZoneId = PARIS) : Clock {
     override fun now(): Instant = instant
     fun advance(ms: Long) {
@@ -28,10 +32,10 @@ private fun paris(y: Int, mo: Int, d: Int, h: Int = 0, mi: Int = 0): Instant =
 
 class BehaviorEngineTest {
 
-    private val defaults = BehaviorConfig()
+    private val defaults = BehaviorConfig().day9to23()
 
     /** Config sans plafond gênant, pour observer délais et sessions. */
-    private val noCap = BehaviorConfig(dailyCap = 1_000_000)
+    private val noCap = BehaviorConfig(dailyCap = 1_000_000).day9to23()
 
     @Test
     fun `délais irréguliers sur 1 000 actions Swipe`() {
@@ -120,7 +124,7 @@ class BehaviorEngineTest {
 
     @Test
     fun `session coupée par le plafond peut être plus courte que sessionMin`() {
-        val config = BehaviorConfig(dailyCap = 10)
+        val config = BehaviorConfig(dailyCap = 10).day9to23()
         val clock = FakeClock(paris(2026, 6, 15, 9))
         val engine = BehaviorEngine(config, Random(1), clock)
         var swipes = 0
@@ -252,7 +256,7 @@ class BehaviorEngineTest {
             paris(2026, 3, 28, 22) to Duration.ofHours(2 + 8).plus(jitter),
         )) {
             val clock = FakeClock(start)
-            val config = BehaviorConfig(dailyCap = 1, resumeJitterMinMs = jitter.toMillis(), resumeJitterMaxMs = jitter.toMillis())
+            val config = BehaviorConfig(dailyCap = 1, resumeJitterMinMs = jitter.toMillis(), resumeJitterMaxMs = jitter.toMillis()).day9to23()
             val engine = BehaviorEngine(config, Random(0), clock)
             engine.recordSwipe()
             assertEquals(Action.CapReached(expected.toMillis()), engine.nextAction(), "départ $start")

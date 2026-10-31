@@ -33,6 +33,10 @@ import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
+
+/** Plage 9 h–23 h (défaut avant le 2026-10-31) : les tests d'horaires en dépendent. */
+private fun BehaviorConfig.day9to23() = copy(activeStartMinute = 9 * 60, activeEndMinute = 23 * 60)
+
 private const val TINDER = "com.tinder"
 private const val SWIPPER = "com.swipper.app"
 private const val OTHER = "com.android.chrome"
@@ -92,7 +96,7 @@ class AutomationControllerTest {
         )
     }
 
-    private val noCap = BehaviorConfig(dailyCap = 1_000_000, sessionMin = 1_000, sessionMax = 1_000)
+    private val noCap = BehaviorConfig(dailyCap = 1_000_000, sessionMin = 1_000, sessionMax = 1_000).day9to23()
 
     private val withRest = BehaviorConfig(
         dailyCap = 1_000, sessionMin = 3, sessionMax = 3, restMinMs = 20 * MINUTE, restMaxMs = 20 * MINUTE,
@@ -248,7 +252,7 @@ class AutomationControllerTest {
 
     @Test
     fun `Plafond - CapReached pendant l'attente, aucun swipe, puis Idle a l'ouverture du lendemain`() = runTest {
-        val r = rig(BehaviorConfig(dailyCap = 2, sessionMin = 1_000, sessionMax = 1_000))
+        val r = rig(BehaviorConfig(dailyCap = 2, sessionMin = 1_000, sessionMax = 1_000).day9to23())
         r.controller.start()
         while (r.controller.state.value != AutomationState.CapReached) advanceTimeBy(100)
         assertEquals(2, r.engine.swipesToday)
@@ -740,7 +744,7 @@ class AutomationControllerTest {
             BehaviorConfig(
                 dailyCap = 1_000_000, sessionMin = 1_000, sessionMax = 1_000,
                 profileOpenProbability = 1.0, profileReadMinMs = readMs, profileReadMaxMs = readMs,
-            ),
+            ).day9to23(),
             Random(5), clock, profileAvailable = { calibrated },
         )
         val scope = CoroutineScope(

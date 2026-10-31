@@ -40,8 +40,8 @@ class SettingsTest {
     fun `formulaire pré-rempli avec les défauts se relit à l'identique`() {
         assertEquals("70", defaultsForm.rightRatioPercent)
         assertEquals("1,8", defaultsForm.delayMedianSeconds)
-        assertEquals("09:00", defaultsForm.activeStart)
-        assertEquals("23:00", defaultsForm.activeEnd)
+        assertEquals("00:00", defaultsForm.activeStart)
+        assertEquals("23:59", defaultsForm.activeEnd)
         assertEquals(ParseResult.Valid(Settings()), defaultsForm.parse())
     }
 
