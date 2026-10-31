@@ -17,11 +17,12 @@ import com.swipper.app.R
 import kotlin.math.roundToInt
 
 /**
- * Vrai si l'écran doit rester allumé : seulement pendant que la boucle swipe (Running, sans
- * pause manuelle). Pause longue, plafond, hors plage, app non cible et Stop laissent la veille.
+ * Vrai si l'écran doit rester allumé : pendant que la boucle swipe (Running) et pendant la
+ * pause longue (Resting, pour que la boucle reparte seule), sans pause manuelle. Plafond,
+ * hors plage, app non cible et Stop laissent la veille.
  */
 internal fun shouldKeepScreenOn(state: AutomationState, userPaused: Boolean): Boolean =
-    state == AutomationState.Running && !userPaused
+    (state == AutomationState.Running || state == AutomationState.Resting) && !userPaused
 
 /**
  * Bouton flottant Play-Pause / Stop (CAP-5), en `TYPE_ACCESSIBILITY_OVERLAY` : aucune

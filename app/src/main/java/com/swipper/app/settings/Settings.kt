@@ -38,8 +38,8 @@ data class Settings(
     val delayMedianSeconds: Double = 1.8,
     val sessionMin: Int = 25,
     val sessionMax: Int = 60,
-    val restMinMinutes: Int = 15,
-    val restMaxMinutes: Int = 90,
+    val restMinMinutes: Int = 0,
+    val restMaxMinutes: Int = 0,
     val dailyCap: Int = 150,
     val activeStartMinute: Int = 9 * 60,
     val activeEndMinute: Int = 23 * 60,
@@ -122,7 +122,7 @@ data class Settings(
         const val DELAY_MIN_S = 0.8
         const val DELAY_MAX_S = 8.0
         val SESSION_RANGE = 1..1_000
-        val REST_RANGE = 1..24 * 60
+        val REST_RANGE = 0..24 * 60
         val CAP_RANGE = 1..10_000
         val MINUTE_RANGE = 0 until 24 * 60
         val PROFILE_OPEN_RANGE = 0..30

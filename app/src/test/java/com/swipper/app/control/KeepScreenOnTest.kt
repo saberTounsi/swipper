@@ -24,8 +24,12 @@ class KeepScreenOnTest {
     }
 
     @Test
-    fun `pause longue, plafond et hors plage - veille normale`() {
-        assertFalse(shouldKeepScreenOn(AutomationState.Resting, userPaused = false))
+    fun `pause longue - ecran maintenu allume pour la reprise`() {
+        assertTrue(shouldKeepScreenOn(AutomationState.Resting, userPaused = false))
+    }
+
+    @Test
+    fun `plafond et hors plage - veille normale`() {
         assertFalse(shouldKeepScreenOn(AutomationState.CapReached, userPaused = false))
         assertFalse(shouldKeepScreenOn(AutomationState.OutsideHours, userPaused = false))
     }
@@ -36,10 +40,11 @@ class KeepScreenOnTest {
     }
 
     @Test
-    fun `seul Running sans pause manuelle garde l'ecran allume`() {
+    fun `seuls Running et Resting sans pause manuelle gardent l'ecran allume`() {
         for (state in AutomationState.entries) {
             for (paused in listOf(false, true)) {
-                assertEquals(state == AutomationState.Running && !paused, shouldKeepScreenOn(state, paused), "$state, pause=$paused")
+                val expected = (state == AutomationState.Running || state == AutomationState.Resting) && !paused
+                assertEquals(expected, shouldKeepScreenOn(state, paused), "$state, pause=$paused")
             }
         }
     }

@@ -62,9 +62,32 @@ class BehaviorEngineTest {
     }
 
     @Test
-    fun `session bornée et pauses longues de 15 à 90 min`() {
+    fun `pause longue à 0 par défaut - nouvelle session sans attente`() {
         val clock = FakeClock(paris(2026, 6, 15, 9))
         val engine = BehaviorEngine(noCap, Random(7), clock)
+        var rests = 0
+        repeat(500) {
+            when (val a = engine.nextAction()) {
+                is Action.Swipe -> {
+                    clock.advance(a.delayMs)
+                    engine.recordSwipe()
+                }
+                is Action.Rest -> {
+                    assertEquals(0L, a.durationMs)
+                    rests++
+                }
+                else -> error("action inattendue : $a")
+            }
+        }
+        assertTrue(rests > 0, "aucune fin de session")
+        assertEquals(null, engine.restUntil?.takeIf { it.isAfter(clock.now()) })
+    }
+
+    @Test
+    fun `session bornée et pauses longues de 15 à 90 min`() {
+        val clock = FakeClock(paris(2026, 6, 15, 9))
+        val config = noCap.copy(restMinMs = 15 * 60_000L, restMaxMs = 90 * 60_000L)
+        val engine = BehaviorEngine(config, Random(7), clock)
         var inSession = 0
         var rests = 0
         repeat(5_000) {
@@ -290,7 +313,7 @@ class BehaviorEngineTest {
             { BehaviorConfig(delayMinMs = 0) },
             { BehaviorConfig(distractionMinMs = -1) },
             { BehaviorConfig(sessionMin = 0) },
-            { BehaviorConfig(restMinMs = 0) },
+            { BehaviorConfig(restMinMs = -1) },
             { BehaviorConfig(dailyCap = 0) },
             { BehaviorConfig(delayMedianMs = 9_000) },
             { BehaviorConfig(activeStartMinute = -1) },

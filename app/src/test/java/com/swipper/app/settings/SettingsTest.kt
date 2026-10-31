@@ -106,7 +106,7 @@ class SettingsTest {
             rightRatioPercent = "101",
             delayMedianSeconds = "0,5",
             sessionMin = "abc",
-            restMaxMinutes = "0",
+            restMaxMinutes = "-1",
             dailyCap = "",
             activeStart = "25:00",
             activeEnd = "9h75",

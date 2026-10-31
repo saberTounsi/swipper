@@ -46,8 +46,8 @@ data class BehaviorConfig(
     val distractionMaxMs: Long = 40_000,
     val sessionMin: Int = 25,
     val sessionMax: Int = 60,
-    val restMinMs: Long = 15 * MINUTE_MS,
-    val restMaxMs: Long = 90 * MINUTE_MS,
+    val restMinMs: Long = 0,
+    val restMaxMs: Long = 0,
     val dailyCap: Int = 150,
     val activeStartMinute: Int = 9 * 60,
     val activeEndMinute: Int = 23 * 60,
@@ -79,8 +79,9 @@ data class BehaviorConfig(
         require(sessionMin > 0) { "sessionMin doit être > 0 (reçu $sessionMin)" }
         require(sessionMax > 0) { "sessionMax doit être > 0 (reçu $sessionMax)" }
         require(sessionMin <= sessionMax) { "sessionMin ($sessionMin) doit être ≤ sessionMax ($sessionMax)" }
-        require(restMinMs > 0) { "restMinMs doit être > 0 (reçu $restMinMs)" }
-        require(restMaxMs > 0) { "restMaxMs doit être > 0 (reçu $restMaxMs)" }
+        // 0 = pas de pause longue entre deux sessions (choix utilisateur du 2026-10-31).
+        require(restMinMs >= 0) { "restMinMs doit être ≥ 0 (reçu $restMinMs)" }
+        require(restMaxMs >= 0) { "restMaxMs doit être ≥ 0 (reçu $restMaxMs)" }
         require(restMinMs <= restMaxMs) { "restMinMs ($restMinMs) doit être ≤ restMaxMs ($restMaxMs)" }
         require(dailyCap >= 1) { "dailyCap doit être ≥ 1 (reçu $dailyCap)" }
         require(activeStartMinute in 0 until MINUTES_PER_DAY) {
