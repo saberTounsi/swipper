@@ -129,7 +129,7 @@ class SwipeAccessibilityService : AccessibilityService() {
                 repository.saveBehaviorStateAsync(state)
             },
             tapExecutor = { pkg ->
-                val point = currentSettings().profilePoint(pkg)
+                val point = currentSettings().openableProfilePoint(pkg)
                 if (point == null || calibrating()) {
                     DispatchResult.Failed
                 } else {
@@ -143,6 +143,19 @@ class SwipeAccessibilityService : AccessibilityService() {
                 val ok = !calibrating()
                 if (!ok) toast(R.string.toast_calibration_in_progress)
                 ok
+            },
+            // Retours qui sortent de l'app : calibration sans doute sur la photo, on l'efface
+            // (« Non calibré » dans les réglages ; le Toast peut être bloqué en arrière-plan).
+            onProfileBackExits = { pkg ->
+                Log.w(TAG, "Calibration de $pkg effacée : le Retour sort de l'app")
+                s.launch {
+                    try {
+                        repository.clearProfilePoint(pkg)
+                        toastLong(getString(R.string.toast_calibration_cleared, TargetApps.label(pkg)))
+                    } catch (e: IOException) {
+                        Log.w(TAG, "Effacement de la calibration impossible", e)
+                    }
+                }
             },
         )
         controller = c
@@ -198,7 +211,7 @@ class SwipeAccessibilityService : AccessibilityService() {
             // Ouverture de profil possible seulement si l'app au premier plan est calibrée
             // (calibration lue en direct : une calibration faite entre-temps compte).
             engine = BehaviorEngine(settings.toBehaviorConfig(), Random.Default, SystemClock, l.state) {
-                currentSettings().profilePoint(foreground.value) != null
+                currentSettings().openableProfilePoint(foreground.value) != null
             },
             picker = DirectionPicker(Random.Default, settings.rightRatio),
             isTarget = { pkg -> TargetApps.isTarget(pkg, settings.allowedPackages) },
@@ -299,7 +312,7 @@ class SwipeAccessibilityService : AccessibilityService() {
     fun startCalibration(packageName: String, appLabel: String): Boolean {
         val s = scope ?: return false
         val overlayView = calibration ?: return false
-        if (packageName !in TargetApps.PACKAGES) return false
+        if (!TargetApps.supportsProfile(packageName)) return false
         controller?.stop()
         calibrationJob?.cancel()
         overlayView.hide()
@@ -344,6 +357,8 @@ class SwipeAccessibilityService : AccessibilityService() {
     }
 
     private fun toast(message: Int) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+
+    private fun toastLong(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 
     /** Republie la notification (par exemple après l'octroi de `POST_NOTIFICATIONS`). */
     fun refreshNotification() {

@@ -14,6 +14,15 @@ object TargetApps {
     /** Noms de paquet de toutes les apps cibles connues (Tinder et Bumble). */
     val PACKAGES: Set<String> = setOf(TINDER, BUMBLE)
 
+    /**
+     * Apps dont le profil s'ouvre par un tap (story 7) : Tinder seul ; sur Bumble, on fait
+     * défiler la carte, l'ouverture de profil n'y a pas de sens.
+     */
+    val PROFILE_PACKAGES: Set<String> = setOf(TINDER)
+
+    /** `true` si [packageName] ouvre son profil par un tap ([PROFILE_PACKAGES]). */
+    fun supportsProfile(packageName: String?): Boolean = packageName != null && packageName in PROFILE_PACKAGES
+
     /** Nom affiché des apps cibles connues. */
     private val LABELS: Map<String, String> = mapOf(TINDER to "Tinder", BUMBLE to "Bumble")
 

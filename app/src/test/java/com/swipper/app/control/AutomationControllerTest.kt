@@ -724,6 +724,10 @@ class AutomationControllerTest {
         var calibrated = true
         var tapResult = DispatchResult.Completed
         var backResult = true
+
+        /** App mise au premier plan par le Retour (sortie de l'app) ; `null` = on reste. */
+        var exitTo: String? = null
+        val exits = mutableListOf<String>()
         val foreground = MutableStateFlow<String?>(TINDER)
         val executor = FakeExecutor { test.currentTime }
         val taps = mutableListOf<Pair<Long, String?>>()
@@ -752,9 +756,116 @@ class AutomationControllerTest {
             },
             goBack = {
                 backs += test.currentTime
+                exitTo?.let { foreground.value = it }
                 backResult
             },
+            onProfileBackExits = { exits += it },
         )
+    }
+
+    /** Laisse la boucle envoyer un Retour de plus, qui sort vers [to] si [exit]. */
+    private fun TestScope.nextBack(r: ProfileRig, exit: Boolean, to: String = OTHER) {
+        r.exitTo = if (exit) to else null
+        val before = r.backs.size
+        r.foreground.value = TINDER
+        advanceUntil { r.backs.size > before }
+    }
+
+    /** Laisse la boucle finir le swipe qui suit le dernier Retour. */
+    private fun TestScope.nextSwipe(r: ProfileRig) {
+        val before = r.executor.completed
+        advanceUntil { r.executor.completed > before }
+    }
+
+    @Test
+    fun `sortie apres Retour - une seule - Paused, calibration gardee`() = runTest {
+        val r = ProfileRig(this, readMs = 1_000)
+        r.controller.start()
+        nextBack(r, exit = true)
+        advanceTimeBy(2_000)
+        runCurrent()
+        assertEquals(AutomationState.Paused, r.controller.state.value)
+        assertTrue(r.exits.isEmpty())
+        r.scope.cancel()
+    }
+
+    @Test
+    fun `sortie apres Retour - deux de suite - calibration effacee une fois`() = runTest {
+        val r = ProfileRig(this, readMs = 1_000)
+        r.controller.start()
+        nextBack(r, exit = true)
+        nextBack(r, exit = true)
+        runCurrent()
+        assertEquals(listOf(TINDER), r.exits)
+        // Compteur remis à 0 : une troisième sortie seule n'efface rien de plus.
+        nextBack(r, exit = true)
+        runCurrent()
+        assertEquals(listOf(TINDER), r.exits)
+        r.scope.cancel()
+    }
+
+    @Test
+    fun `sortie apres Retour - non consecutives - rien d'efface`() = runTest {
+        val r = ProfileRig(this, readMs = 1_000)
+        r.controller.start()
+        nextBack(r, exit = true)
+        nextBack(r, exit = false)
+        nextSwipe(r)
+        nextBack(r, exit = true)
+        runCurrent()
+        assertTrue(r.exits.isEmpty(), "effacé malgré un Retour normal entre les sorties")
+        r.scope.cancel()
+    }
+
+    @Test
+    fun `sortie apres Retour - vers une autre app cible - pas de swipe, sortie comptee`() = runTest {
+        val r = ProfileRig(this, readMs = 1_000)
+        r.controller.start()
+        nextBack(r, exit = true, to = BUMBLE)
+        advanceTimeBy(1_600) // fin de l'attente après le Retour, Bumble au premier plan
+        runCurrent()
+        // Le cycle suivant (tap, lecture 1 s, Retour, attente) ne peut pas swiper avant 1,7 s.
+        assertTrue(r.executor.starts.isEmpty(), "swipe dans Bumble après le Retour de Tinder")
+        r.exitTo = null
+        assertTrue(r.exits.isEmpty())
+        nextBack(r, exit = true)
+        runCurrent()
+        assertEquals(listOf(TINDER), r.exits)
+        r.scope.cancel()
+    }
+
+    @Test
+    fun `sortie apres Retour - compteur vide a chaque Demarrer`() = runTest {
+        val r = ProfileRig(this, readMs = 1_000)
+        r.controller.start()
+        nextBack(r, exit = true)
+        r.controller.stop() // ex. recalibration
+        r.controller.start()
+        nextBack(r, exit = true)
+        runCurrent()
+        assertTrue(r.exits.isEmpty(), "sortie d'une session précédente comptée")
+        r.scope.cancel()
+    }
+
+    @Test
+    fun `sortie apres Retour - pause pendant l'attente - compteur inchange`() = runTest {
+        val r = ProfileRig(this, readMs = 1_000)
+        r.controller.start()
+        nextBack(r, exit = true)
+        nextBack(r, exit = false)
+        r.controller.togglePause() // pendant l'attente de 0,6–1,5 s après le Retour
+        runCurrent()
+        val swipes = r.executor.completed
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(swipes, r.executor.completed, "swipe malgré la pause")
+        r.controller.togglePause()
+        runCurrent()
+        // La pause n'a pas remis le compteur à 0 : la sortie suivante est la 2e de suite.
+        nextBack(r, exit = true)
+        runCurrent()
+        assertEquals(listOf(TINDER), r.exits)
+        r.scope.cancel()
     }
 
     @Test

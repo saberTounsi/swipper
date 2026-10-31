@@ -113,6 +113,21 @@ class SettingsRepositoryTest {
     }
 
     @Test
+    fun `clearProfilePoint - position effacée, autres réglages gardés`() = runBlocking {
+        val repo = SettingsRepository(store(), newScope())
+        repo.save(Settings(profileOpenPercent = 30))
+        repo.saveProfilePoint(TargetApps.TINDER, FractionPoint(0.9f, 0.64f))
+        repo.saveProfilePoint(TargetApps.BUMBLE, FractionPoint(0.5f, 0.5f))
+        repo.clearProfilePoint(TargetApps.TINDER)
+        val read = repo.currentSettings()
+        assertEquals(null, read.profilePoint(TargetApps.TINDER))
+        assertEquals(FractionPoint(0.5f, 0.5f), read.profilePoint(TargetApps.BUMBLE))
+        assertEquals(30, read.profileOpenPercent)
+        repo.clearProfilePoint(TargetApps.TINDER) // déjà effacée : sans effet
+        assertEquals(null, repo.currentSettings().profilePoint(TargetApps.TINDER))
+    }
+
+    @Test
     fun `positions calibrées corrompues - ignorées sans exception`() = runBlocking {
         val s = store()
         val repo = SettingsRepository(s, newScope())

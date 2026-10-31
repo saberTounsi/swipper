@@ -4,15 +4,18 @@ import android.accessibilityservice.AccessibilityService
 import android.annotation.SuppressLint
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import com.swipper.app.R
 import com.swipper.app.gesture.FractionPoint
@@ -22,9 +25,10 @@ import kotlin.math.roundToInt
 
 /**
  * Calque de calibration de l'ouverture de profil (story 7), en `TYPE_ACCESSIBILITY_OVERLAY`
- * plein écran et semi-transparent, avec une consigne : il capte un seul toucher, le
- * convertit en fractions de l'écran ([FractionPoint.of]) et disparaît. Annulable par le
- * bouton « Annuler » ou la touche Retour (le calque prend le focus pour la recevoir).
+ * plein écran et semi-transparent, avec une consigne : il capte un toucher, montre un rond à
+ * cet endroit avec « Valider » et « Recommencer », puis, sur Valider, convertit le point en
+ * fractions de l'écran ([FractionPoint.of]) et disparaît. Annulable par le bouton
+ * « Annuler » ou la touche Retour (le calque prend le focus pour la recevoir).
  * Il ne lit pas le contenu de l'écran.
  *
  * À utiliser depuis le thread principal. Une seule issue par [show] : [onPoint] ou [onCancel].
@@ -84,38 +88,87 @@ class CalibrationOverlay(
                 Gravity.TOP,
             ).apply { topMargin = (screenSize().heightPx * INSTRUCTION_TOP_FRACTION).roundToInt() },
         )
+        // Toucher en attente de validation (fractions calculées au toucher) ; null = on attend.
+        var pending: FractionPoint? = null
+        val markerSize = dp(MARKER_DP)
+        val marker = View(service).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setStroke(dp(3), Color.YELLOW)
+                setColor(Color.argb(60, 255, 255, 0))
+            }
+            visibility = View.GONE
+        }
+        layout.addView(marker, FrameLayout.LayoutParams(markerSize, markerSize))
         val cancel = Button(service).apply {
             text = service.getString(R.string.calibration_cancel)
             setOnClickListener { finish(onCancel) }
         }
+        val retry = Button(service).apply {
+            text = service.getString(R.string.calibration_retry)
+            visibility = View.GONE
+        }
+        val validate = Button(service).apply {
+            text = service.getString(R.string.calibration_validate)
+            visibility = View.GONE
+        }
+        fun showPending(localX: Float, localY: Float, point: FractionPoint?) {
+            pending = point
+            val confirming = point != null
+            marker.visibility = if (confirming) View.VISIBLE else View.GONE
+            marker.translationX = localX - markerSize / 2f
+            marker.translationY = localY - markerSize / 2f
+            retry.visibility = marker.visibility
+            validate.visibility = marker.visibility
+            instruction.text = if (confirming) {
+                service.getString(R.string.calibration_confirm_instruction)
+            } else {
+                service.getString(R.string.calibration_instruction, appLabel)
+            }
+        }
+        retry.setOnClickListener { showPending(0f, 0f, null) }
+        validate.setOnClickListener {
+            val point = pending ?: return@setOnClickListener
+            finish { onPoint(point) }
+        }
+        val buttons = LinearLayout(service).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(cancel)
+            addView(retry)
+            addView(validate)
+        }
         layout.addView(
-            cancel,
+            buttons,
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP or Gravity.CENTER_HORIZONTAL,
             ).apply { topMargin = (screenSize().heightPx * CANCEL_TOP_FRACTION).roundToInt() },
         )
-        // Le bouton consomme ses touches ; tout autre toucher à un doigt, presque immobile
-        // (moins que le seuil de glissement), est la position calibrée. Sinon on attend le suivant.
+        // Les boutons consomment leurs touches ; tout autre toucher à un doigt, presque immobile
+        // (moins que le seuil de glissement), est la position proposée, à valider. Sinon on
+        // attend le suivant. Pendant la validation, le fond ignore les touches.
         val slop = ViewConfiguration.get(service).scaledTouchSlop.toFloat()
         var tracking = false
         var downX = 0f
         var downY = 0f
+        var downLocalX = 0f
+        var downLocalY = 0f
         fun moved(event: MotionEvent) = hypot(event.rawX - downX, event.rawY - downY) > slop
         layout.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    tracking = true
+                    tracking = pending == null
                     downX = event.rawX
                     downY = event.rawY
+                    downLocalX = event.x
+                    downLocalY = event.y
                 }
                 MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_CANCEL -> tracking = false
                 MotionEvent.ACTION_MOVE -> if (tracking && moved(event)) tracking = false
                 MotionEvent.ACTION_UP -> {
                     if (tracking && event.pointerCount == 1 && !moved(event)) {
-                        val point = FractionPoint.of(downX, downY, screenSize())
-                        finish { onPoint(point) }
+                        showPending(downLocalX, downLocalY, FractionPoint.of(downX, downY, screenSize()))
                     }
                     tracking = false
                 }
@@ -156,5 +209,8 @@ class CalibrationOverlay(
         /** Consigne et bouton dans le haut de l'écran : la zone du profil est plutôt en bas. */
         const val INSTRUCTION_TOP_FRACTION = 0.10
         const val CANCEL_TOP_FRACTION = 0.25
+
+        /** Diamètre du rond qui montre l'endroit touché. */
+        const val MARKER_DP = 44
     }
 }

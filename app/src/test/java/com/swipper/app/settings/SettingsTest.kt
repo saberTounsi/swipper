@@ -18,6 +18,16 @@ class SettingsTest {
     private val defaultsForm = SettingsForm.of(Settings())
 
     @Test
+    fun `openableProfilePoint - Tinder seul, position Bumble ancienne ignoree`() {
+        val tinder = FractionPoint(0.9f, 0.8f)
+        val s = Settings(profilePoints = mapOf(TargetApps.TINDER to tinder, TargetApps.BUMBLE to FractionPoint(0.5f, 0.5f)))
+        assertEquals(tinder, s.openableProfilePoint(TargetApps.TINDER))
+        assertEquals(null, s.openableProfilePoint(TargetApps.BUMBLE))
+        assertEquals(null, s.openableProfilePoint(null))
+        assertEquals(null, Settings().openableProfilePoint(TargetApps.TINDER))
+    }
+
+    @Test
     fun `défauts valides et moteur identique à aujourd'hui`() {
         val s = Settings()
         assertTrue(s.validate().isEmpty())

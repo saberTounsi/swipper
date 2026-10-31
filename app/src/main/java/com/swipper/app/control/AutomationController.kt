@@ -76,6 +76,8 @@ class SessionSetup(
  * @param goBack retour arrière (`GLOBAL_ACTION_BACK`) après la lecture d'un profil ;
  *   `false` si le système le refuse : la boucle s'arrête alors avec [BACK_REFUSED_ERROR].
  * @param startAllowed `false` = [start] ignoré (ex. calibration en cours).
+ * @param onProfileBackExits appelé avec le paquet quand [MAX_PROFILE_BACK_EXITS] Retours
+ *   d'affilée après une lecture de profil ont fait sortir de l'app (calibration mal placée).
  * @param onStateChanged appelé avec l'état du moteur après chaque swipe enregistré et
  *   chaque décision qui le modifie (fin de session, changement de jour), pour le persister.
  */
@@ -93,6 +95,7 @@ class AutomationController(
     private val tapExecutor: TapExecutor = TapExecutor { DispatchResult.Failed },
     private val goBack: () -> Boolean = { false },
     private val startAllowed: () -> Boolean = { true },
+    private val onProfileBackExits: (String) -> Unit = {},
 ) {
     private var engine: BehaviorEngine = engine
     private var picker: DirectionPicker = picker
@@ -152,6 +155,13 @@ class AutomationController(
      */
     private var profileOpenIn: String? = null
 
+    /**
+     * Sorties d'app d'affilée juste après le Retour d'une lecture de profil, par paquet :
+     * l'app au premier plan n'est plus celle du profil avant le swipe qui suit. Vidé à
+     * chaque [start].
+     */
+    private val profileBackExits = mutableMapOf<String, Int>()
+
     /** Démarre la boucle (sans effet si elle tourne déjà). Paused tant que la porte est fermée. */
     fun start() {
         if (job?.isActive == true) return
@@ -171,6 +181,9 @@ class AutomationController(
         _error.value = null
         _userPaused.value = false
         consecutiveFailures = 0
+        // « D'affilée » dans une même session ; une calibration arrête la boucle, donc une
+        // position refaite repart aussi de 0.
+        profileBackExits.clear()
         syncSwipesToday()
         _state.value = if (gateOpen()) AutomationState.Running else AutomationState.Paused
         lateinit var self: Job
@@ -256,6 +269,7 @@ class AutomationController(
                     // ([profileOpenIn] le garde en mémoire pour la reprise).
                     val pkg = foregroundPackage.value
                     var backRefused = false
+                    var backDone = false
                     val result = whileGateOpen {
                         delay(action.delayMs)
                         if (!engine.isInActiveHours(clock.now())) return@whileGateOpen null
@@ -273,13 +287,19 @@ class AutomationController(
                                 return@whileGateOpen null
                             }
                             profileOpenIn = null
+                            backDone = true
                             delay(action.backPauseMs)
+                            if (foregroundPackage.value != pkg) return@whileGateOpen null
                         }
                         if (canSwipeNow()) executor.execute(picker.pick()) else null
                     }
                     if (backRefused) {
                         stopOnBackRefused()
                         return
+                    }
+                    if (backDone && pkg != null) {
+                        val left = foregroundPackage.value != pkg
+                        countProfileBackExit(pkg, left = left, swiped = result != null)
                     }
                     if (!handleSwipeResult(result)) return
                 }
@@ -339,6 +359,25 @@ class AutomationController(
      */
     private fun canSwipeNow(): Boolean =
         engine.isInActiveHours(clock.now()) && (profileOpenIn == null || foregroundPackage.value != profileOpenIn)
+
+    /**
+     * Compte une sortie d'app après le Retour d'un profil de [pkg] ([left]) ; remis à 0 quand
+     * l'app est restée jusqu'au swipe ([swiped]). Pause sans sortie : compteur inchangé.
+     */
+    private fun countProfileBackExit(pkg: String, left: Boolean, swiped: Boolean) {
+        when {
+            left -> {
+                val exits = (profileBackExits[pkg] ?: 0) + 1
+                if (exits >= MAX_PROFILE_BACK_EXITS) {
+                    profileBackExits.remove(pkg)
+                    onProfileBackExits(pkg)
+                } else {
+                    profileBackExits[pkg] = exits
+                }
+            }
+            swiped -> profileBackExits.remove(pkg)
+        }
+    }
 
     private fun stopOnBackRefused() {
         toIdle()
@@ -423,6 +462,9 @@ class AutomationController(
     companion object {
         /** Swipes non aboutis (Failed/Cancelled) d'affilée avant l'arrêt de la boucle. */
         const val MAX_CONSECUTIVE_FAILURES = 5
+
+        /** Sorties d'app d'affilée après un Retour de profil avant d'effacer la calibration. */
+        const val MAX_PROFILE_BACK_EXITS = 2
 
         /** Erreur d'arrêt quand le Retour après une ouverture de profil est refusé. */
         const val BACK_REFUSED_ERROR = "retour arrière refusé : profil peut-être resté ouvert"

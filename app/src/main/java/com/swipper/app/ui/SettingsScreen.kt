@@ -155,10 +155,7 @@ fun SettingsScreen(
             steps = Settings.PROFILE_OPEN_RANGE.last - Settings.PROFILE_OPEN_RANGE.first - 1,
         )
         Text(stringResource(R.string.settings_profile_hint), style = MaterialTheme.typography.bodySmall)
-        for ((pkg, button) in listOf(
-            TargetApps.TINDER to R.string.settings_calibrate_tinder,
-            TargetApps.BUMBLE to R.string.settings_calibrate_bumble,
-        )) {
+        for ((pkg, button) in listOf(TargetApps.TINDER to R.string.settings_calibrate_tinder)) {
             val point = saved.profilePoint(pkg)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedButton(onClick = { onCalibrate(pkg) }) { Text(stringResource(button)) }

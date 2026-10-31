@@ -95,6 +95,14 @@ class SettingsRepository internal constructor(
         }
     }
 
+    /** Efface la position calibrée de [packageName] (« Non calibré »). */
+    suspend fun clearProfilePoint(packageName: String) {
+        store.edit { p ->
+            p.remove(profileXKey(packageName))
+            p.remove(profileYKey(packageName))
+        }
+    }
+
     /** Lecture ponctuelle des réglages. */
     suspend fun currentSettings(): Settings = settings.first()
 

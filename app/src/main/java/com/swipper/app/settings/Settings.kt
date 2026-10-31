@@ -100,6 +100,14 @@ data class Settings(
     /** Position calibrée d'ouverture de profil de [packageName], ou `null`. */
     fun profilePoint(packageName: String?): FractionPoint? = packageName?.let { profilePoints[it] }
 
+    /**
+     * Position où taper pour ouvrir un profil dans [packageName] : seulement pour une app qui
+     * ouvre son profil par un tap ([TargetApps.supportsProfile]) ; une position Bumble
+     * enregistrée par une version précédente est ignorée.
+     */
+    fun openableProfilePoint(packageName: String?): FractionPoint? =
+        profilePoint(packageName)?.takeIf { TargetApps.supportsProfile(packageName) }
+
     /** Ratio de swipes à droite pour le `DirectionPicker`, dans [0 ; 1]. */
     val rightRatio: Double get() = rightRatioPercent / 100.0
 

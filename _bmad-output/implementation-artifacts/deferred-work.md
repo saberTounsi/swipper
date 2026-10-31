@@ -52,3 +52,12 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-ecran-allume-pendant-swipe.md`
   summary: Le câblage FloatingControls.render → FLAG_KEEP_SCREEN_ON → updateViewLayout n'est pas testé (seule la règle shouldKeepScreenOn l'est).
   evidence: Revue (#5). Demande Robolectric ou un test instrumenté ; vérifié à la main sur le Redmi.
+- source_spec: `_bmad-output/implementation-artifacts/spec-calibration-profil-fiable.md`
+  summary: Si l'événement « autre app » arrive après la fin de l'attente qui suit le Retour, le swipe part sur le bureau et la sortie n'est pas comptée.
+  evidence: Revue (#8), non vérifié (maybe-false, serait medium). À observer sur le Redmi avec une calibration volontairement sur la photo.
+- source_spec: `_bmad-output/implementation-artifacts/spec-calibration-profil-fiable.md`
+  summary: Calque de calibration (Valider / Recommencer, rond, fond ignoré pendant la validation) sans test automatique.
+  evidence: Revue (#18). Vues Android sans Robolectric ; vérifié à la main.
+- source_spec: `_bmad-output/implementation-artifacts/spec-calibration-profil-fiable.md`
+  summary: Câblage onProfileBackExits → clearProfilePoint + Toast dans SwipeAccessibilityService non testé.
+  evidence: Revue (#19). Même report que sessionSetupFrom (story 6).
