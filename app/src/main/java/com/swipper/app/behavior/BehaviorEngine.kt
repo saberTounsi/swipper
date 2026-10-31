@@ -84,7 +84,7 @@ data class BehaviorState(
  *   profil calibrée ; sinon [Action.OpenProfile] n'est jamais renvoyé.
  */
 class BehaviorEngine(
-    private val config: BehaviorConfig,
+    internal val config: BehaviorConfig,
     private val random: Random,
     private val clock: Clock,
     initialState: BehaviorState? = null,

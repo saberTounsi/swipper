@@ -26,6 +26,7 @@ import com.swipper.app.control.AutomationState
 import com.swipper.app.control.CalibrationOverlay
 import com.swipper.app.control.FloatingControls
 import com.swipper.app.control.SessionSetup
+import com.swipper.app.control.sessionSetupFrom
 import com.swipper.app.control.TargetApps
 import com.swipper.app.decision.DirectionPicker
 import com.swipper.app.gesture.Direction
@@ -206,16 +207,9 @@ class SwipeAccessibilityService : AccessibilityService() {
      */
     private fun sessionSetup(): SessionSetup? {
         val l = loaded ?: return null
-        val settings = l.settings.orDefaults()
-        return SessionSetup(
-            // Ouverture de profil possible seulement si l'app au premier plan est calibrée
-            // (calibration lue en direct : une calibration faite entre-temps compte).
-            engine = BehaviorEngine(settings.toBehaviorConfig(), Random.Default, SystemClock, l.state) {
-                currentSettings().openableProfilePoint(foreground.value) != null
-            },
-            picker = DirectionPicker(Random.Default, settings.rightRatio),
-            isTarget = { pkg -> TargetApps.isTarget(pkg, settings.allowedPackages) },
-        )
+        return sessionSetupFrom(l.settings, l.state, Random.Default, SystemClock) {
+            currentSettings().openableProfilePoint(foreground.value)
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {

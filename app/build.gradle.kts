@@ -1,3 +1,5 @@
+import com.android.build.api.artifact.SingleArtifact
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -56,4 +58,35 @@ dependencies {
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotlinx.coroutines.test)
     testRuntimeOnly(libs.junit.platform.launcher)
+}
+
+/**
+ * Usage personnel, hors réseau : échoue si le manifeste fusionné (dépendances comprises)
+ * demande une permission interdite. Branché sur `check` et sur chaque assemble.
+ */
+abstract class CheckForbiddenPermissions : DefaultTask() {
+    @get:InputFile
+    abstract val mergedManifest: RegularFileProperty
+
+    @get:Input
+    abstract val forbidden: ListProperty<String>
+
+    @TaskAction
+    fun verify() {
+        val text = mergedManifest.get().asFile.readText()
+        val found = forbidden.get().filter { Regex("""android:name="${Regex.escape(it)}"""").containsMatchIn(text) }
+        check(found.isEmpty()) { "Permissions interdites dans le manifeste fusionné : $found" }
+    }
+}
+
+androidComponents {
+    onVariants { variant ->
+        val name = variant.name.replaceFirstChar { it.uppercase() }
+        val task = tasks.register<CheckForbiddenPermissions>("check${name}ForbiddenPermissions") {
+            mergedManifest.set(variant.artifacts.get(SingleArtifact.MERGED_MANIFEST))
+            forbidden.set(listOf("android.permission.INTERNET", "android.permission.SYSTEM_ALERT_WINDOW"))
+        }
+        tasks.named("check") { dependsOn(task) }
+        afterEvaluate { tasks.named("assemble$name") { dependsOn(task) } }
+    }
 }
