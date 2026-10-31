@@ -559,6 +559,24 @@ class BehaviorEngineTest {
     }
 
     @Test
+    fun `pause restaurée plus longue que le nouveau maximum - ramenée au maximum ou annulée`() {
+        val clock = FakeClock(paris(2026, 6, 15, 14))
+        val saved = BehaviorState(
+            swipesToday = 48, day = LocalDate.of(2026, 6, 15), sessionSwipes = 0, sessionTarget = 30,
+            restUntil = clock.instant.plusMillis(60 * 60_000L),
+        )
+        // Pause réglée entre-temps à 5–10 min : il reste 10 min, pas 60.
+        val shorter = BehaviorConfig(restMinMs = 5 * 60_000L, restMaxMs = 10 * 60_000L)
+        val capped = BehaviorEngine(shorter, Random(1), clock, saved)
+        assertEquals(Action.Rest(10 * 60_000L), capped.nextAction())
+        assertEquals(clock.instant.plusMillis(10 * 60_000L), capped.state.restUntil)
+        // Pause réglée à 0 : on swipe tout de suite.
+        val none = BehaviorEngine(BehaviorConfig(), Random(1), clock, saved)
+        assertTrue(none.nextAction() is Action.Swipe)
+        assertEquals(null, none.state.restUntil)
+    }
+
+    @Test
     fun `plafond atteint puis redémarrage le même jour donne CapReached immédiatement`() {
         val clock = FakeClock(paris(2026, 6, 15, 14))
         val first = BehaviorEngine(defaults, Random(5), clock)

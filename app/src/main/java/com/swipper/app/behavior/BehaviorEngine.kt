@@ -148,7 +148,13 @@ class BehaviorEngine(
             return Action.OutsideHours(millisUntilResume(now, nextOpeningFrom(now)))
         }
         restUntil?.let { until ->
-            val remaining = until.toEpochMilli() - now.toInstant().toEpochMilli()
+            var remaining = until.toEpochMilli() - now.toInstant().toEpochMilli()
+            // Pause restaurée plus longue que le maximum des réglages actuels (réglages changés
+            // entre-temps) : ramenée à ce maximum.
+            if (restoredRest && remaining > config.restMaxMs) {
+                remaining = config.restMaxMs
+                restUntil = now.toInstant().plusMillis(remaining)
+            }
             if (remaining <= 0) clearRest() else if (restoredRest) return Action.Rest(remaining)
         }
         if (sessionSwipes >= sessionTarget) {
