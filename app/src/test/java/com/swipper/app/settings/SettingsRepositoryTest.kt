@@ -113,6 +113,17 @@ class SettingsRepositoryTest {
     }
 
     @Test
+    fun `distractions - aller-retour, défauts si absentes`() = runBlocking {
+        val repo = SettingsRepository(store(), newScope())
+        assertEquals(Settings().distractionPercent, repo.currentSettings().distractionPercent)
+        repo.save(Settings(distractionPercent = 0, distractionMinSeconds = 3, distractionMaxSeconds = 60))
+        val read = repo.currentSettings()
+        assertEquals(0, read.distractionPercent)
+        assertEquals(3, read.distractionMinSeconds)
+        assertEquals(60, read.distractionMaxSeconds)
+    }
+
+    @Test
     fun `clearProfilePoint - position effacée, autres réglages gardés`() = runBlocking {
         val repo = SettingsRepository(store(), newScope())
         repo.save(Settings(profileOpenPercent = 30))

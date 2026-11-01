@@ -27,6 +27,10 @@ import kotlin.math.roundToLong
  * @property activeStartMinute début de la plage horaire, en minutes depuis minuit.
  * @property activeEndMinute fin de la plage horaire, en minutes depuis minuit.
  * @property targetPackages apps cibles cochées, parmi [TargetApps.PACKAGES].
+ * @property distractionPercent probabilité qu'une « distraction » remplace le délai entre
+ *   deux swipes, en %, dans [0 ; 20] (0 = jamais).
+ * @property distractionMinSeconds durée minimale d'une distraction, en s.
+ * @property distractionMaxSeconds durée maximale d'une distraction, en s.
  * @property profileOpenPercent probabilité d'ouvrir un profil avant de swiper, en %, dans
  *   [0 ; 30] (story 7).
  * @property profilePoints position calibrée d'ouverture de profil par app (fractions de
@@ -44,6 +48,9 @@ data class Settings(
     val activeStartMinute: Int = 0,
     val activeEndMinute: Int = 23 * 60 + 59,
     val targetPackages: Set<String> = TargetApps.PACKAGES,
+    val distractionPercent: Int = 2,
+    val distractionMinSeconds: Int = 5,
+    val distractionMaxSeconds: Int = 15,
     val profileOpenPercent: Int = 8,
     val profilePoints: Map<String, FractionPoint> = emptyMap(),
 ) {
@@ -70,6 +77,14 @@ data class Settings(
             add(FieldError(Field.ActiveEnd, Reason.SameStartEnd))
         }
         if (targetPackages.none { it in TargetApps.PACKAGES }) add(FieldError(Field.TargetApps, Reason.NoTargetApp))
+        if (distractionPercent !in DISTRACTION_RANGE) add(FieldError(Field.Distraction, Reason.OutOfRange))
+        if (distractionMinSeconds !in DISTRACTION_SECONDS_RANGE) add(FieldError(Field.DistractionMin, Reason.OutOfRange))
+        if (distractionMaxSeconds !in DISTRACTION_SECONDS_RANGE) add(FieldError(Field.DistractionMax, Reason.OutOfRange))
+        if (distractionMinSeconds in DISTRACTION_SECONDS_RANGE && distractionMaxSeconds in DISTRACTION_SECONDS_RANGE &&
+            distractionMinSeconds > distractionMaxSeconds
+        ) {
+            add(FieldError(Field.DistractionMin, Reason.MinAboveMax))
+        }
         if (profileOpenPercent !in PROFILE_OPEN_RANGE) add(FieldError(Field.ProfileOpen, Reason.OutOfRange))
     }
 
@@ -93,6 +108,9 @@ data class Settings(
             dailyCap = dailyCap,
             activeStartMinute = activeStartMinute,
             activeEndMinute = activeEndMinute,
+            distractionProbability = distractionPercent / 100.0,
+            distractionMinMs = distractionMinSeconds * SECOND_MS,
+            distractionMaxMs = distractionMaxSeconds * SECOND_MS,
             profileOpenProbability = profileOpenPercent / 100.0,
         )
     }
@@ -126,6 +144,9 @@ data class Settings(
         val CAP_RANGE = 1..10_000
         val MINUTE_RANGE = 0 until 24 * 60
         val PROFILE_OPEN_RANGE = 0..30
+        val DISTRACTION_RANGE = 0..20
+        val DISTRACTION_SECONDS_RANGE = 1..300
+        private const val SECOND_MS = 1_000L
         private const val MINUTE_MS = 60_000L
     }
 }
@@ -133,7 +154,7 @@ data class Settings(
 /** Champ de l'écran de réglages. */
 enum class Field {
     RightRatio, DelayMedian, SessionMin, SessionMax, RestMin, RestMax, DailyCap, ActiveStart, ActiveEnd, TargetApps,
-    ProfileOpen,
+    ProfileOpen, Distraction, DistractionMin, DistractionMax,
 }
 
 /** Motif d'une erreur de saisie. */
@@ -169,6 +190,9 @@ data class SettingsForm(
     val activeStart: String,
     val activeEnd: String,
     val targetPackages: Set<String>,
+    val distractionPercent: String = Settings().distractionPercent.toString(),
+    val distractionMinSeconds: String = Settings().distractionMinSeconds.toString(),
+    val distractionMaxSeconds: String = Settings().distractionMaxSeconds.toString(),
     val profileOpenPercent: String = Settings().profileOpenPercent.toString(),
     /** Positions calibrées, recopiées telles quelles (non éditées par le formulaire). */
     val profilePoints: Map<String, FractionPoint> = emptyMap(),
@@ -195,6 +219,9 @@ data class SettingsForm(
             activeStartMinute = minute(activeStart, Field.ActiveStart) ?: DEFAULTS.activeStartMinute,
             activeEndMinute = minute(activeEnd, Field.ActiveEnd) ?: DEFAULTS.activeEndMinute,
             targetPackages = targetPackages,
+            distractionPercent = int(distractionPercent, Field.Distraction) ?: DEFAULTS.distractionPercent,
+            distractionMinSeconds = int(distractionMinSeconds, Field.DistractionMin) ?: DEFAULTS.distractionMinSeconds,
+            distractionMaxSeconds = int(distractionMaxSeconds, Field.DistractionMax) ?: DEFAULTS.distractionMaxSeconds,
             profileOpenPercent = int(profileOpenPercent, Field.ProfileOpen) ?: DEFAULTS.profileOpenPercent,
             profilePoints = profilePoints,
         )
@@ -219,6 +246,9 @@ data class SettingsForm(
             activeStart = formatTimeOfDay(settings.activeStartMinute),
             activeEnd = formatTimeOfDay(settings.activeEndMinute),
             targetPackages = settings.targetPackages,
+            distractionPercent = settings.distractionPercent.toString(),
+            distractionMinSeconds = settings.distractionMinSeconds.toString(),
+            distractionMaxSeconds = settings.distractionMaxSeconds.toString(),
             profileOpenPercent = settings.profileOpenPercent.toString(),
             profilePoints = settings.profilePoints,
         )

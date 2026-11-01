@@ -40,7 +40,9 @@ class BehaviorEngineTest {
     @Test
     fun `délais irréguliers sur 1 000 actions Swipe`() {
         val clock = FakeClock(paris(2026, 6, 15, 9))
-        val engine = BehaviorEngine(noCap, Random(42), clock)
+        // Anciennes valeurs de distraction (5 %, 10–40 s) : séparées des délais normaux (≤ 8 s).
+        val config = noCap.copy(distractionProbability = 0.05, distractionMinMs = 10_000, distractionMaxMs = 40_000)
+        val engine = BehaviorEngine(config, Random(42), clock)
         val delays = mutableListOf<Long>()
         while (delays.size < 1000) {
             when (val a = engine.nextAction()) {

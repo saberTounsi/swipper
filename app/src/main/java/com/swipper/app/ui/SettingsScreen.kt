@@ -118,6 +118,24 @@ fun SettingsScreen(
                 form = form.copy(restMaxMinutes = it)
             }
         }
+        val distraction = form.distractionPercent.toIntOrNull()?.coerceIn(Settings.DISTRACTION_RANGE)
+            ?: saved.distractionPercent
+        Text(stringResource(R.string.settings_distraction, distraction), style = MaterialTheme.typography.titleSmall)
+        Slider(
+            value = distraction.toFloat(),
+            onValueChange = { form = form.copy(distractionPercent = it.roundToInt().toString()) },
+            valueRange = Settings.DISTRACTION_RANGE.first.toFloat()..Settings.DISTRACTION_RANGE.last.toFloat(),
+            steps = Settings.DISTRACTION_RANGE.last - Settings.DISTRACTION_RANGE.first - 1,
+        )
+        Text(stringResource(R.string.settings_distraction_hint), style = MaterialTheme.typography.bodySmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            NumberField(stringResource(R.string.settings_distraction_min), form.distractionMinSeconds, errors, Field.DistractionMin, Modifier.weight(1f)) {
+                form = form.copy(distractionMinSeconds = it)
+            }
+            NumberField(stringResource(R.string.settings_distraction_max), form.distractionMaxSeconds, errors, Field.DistractionMax, Modifier.weight(1f)) {
+                form = form.copy(distractionMaxSeconds = it)
+            }
+        }
         NumberField(stringResource(R.string.settings_daily_cap), form.dailyCap, errors, Field.DailyCap) {
             form = form.copy(dailyCap = it)
         }
@@ -251,6 +269,8 @@ private fun errorMessage(error: FieldError): String = when (error.reason) {
         Field.ActiveStart, Field.ActiveEnd -> stringResource(R.string.settings_error_time)
         Field.TargetApps -> stringResource(R.string.settings_error_no_target)
         Field.ProfileOpen -> stringResource(R.string.settings_error_profile_open)
+        Field.Distraction -> stringResource(R.string.settings_error_distraction)
+        Field.DistractionMin, Field.DistractionMax -> stringResource(R.string.settings_error_distraction_seconds)
     }
 }
 

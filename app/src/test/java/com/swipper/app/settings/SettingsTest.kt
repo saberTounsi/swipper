@@ -206,4 +206,38 @@ class SettingsTest {
         // Réglages corrompus : défauts, mais la calibration est conservée.
         assertEquals(calibrated.profilePoints, calibrated.copy(dailyCap = 0).orDefaults().profilePoints)
     }
+
+    @Test
+    fun `distractions - défaut 2 % de 5 à 15 s, réglables, 0 % = jamais`() {
+        val config = Settings().toBehaviorConfig()
+        assertEquals(0.02, config.distractionProbability, 1e-12)
+        assertEquals(5_000L, config.distractionMinMs)
+        assertEquals(15_000L, config.distractionMaxMs)
+        assertEquals(BehaviorConfig().distractionProbability, config.distractionProbability, 1e-12)
+        assertEquals("2", defaultsForm.distractionPercent)
+
+        val custom = defaultsForm.copy(distractionPercent = "0", distractionMinSeconds = "3", distractionMaxSeconds = "300")
+        val parsed = (custom.parse() as ParseResult.Valid).settings
+        assertEquals(0.0, parsed.toBehaviorConfig().distractionProbability)
+        assertEquals(3_000L, parsed.toBehaviorConfig().distractionMinMs)
+        assertEquals(300_000L, parsed.toBehaviorConfig().distractionMaxMs)
+        assertEquals(ParseResult.Valid(parsed), SettingsForm.of(parsed).parse())
+
+        for (bad in listOf("21", "-1", "abc")) {
+            assertEquals(
+                ParseResult.Invalid(listOf(FieldError(Field.Distraction, Reason.OutOfRange))),
+                defaultsForm.copy(distractionPercent = bad).parse(), bad,
+            )
+        }
+        for (bad in listOf("0", "301", "x")) {
+            assertEquals(
+                ParseResult.Invalid(listOf(FieldError(Field.DistractionMax, Reason.OutOfRange))),
+                defaultsForm.copy(distractionMaxSeconds = bad).parse(), bad,
+            )
+        }
+        assertEquals(
+            ParseResult.Invalid(listOf(FieldError(Field.DistractionMin, Reason.MinAboveMax))),
+            defaultsForm.copy(distractionMinSeconds = "20", distractionMaxSeconds = "10").parse(),
+        )
+    }
 }

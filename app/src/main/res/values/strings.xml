@@ -62,6 +62,10 @@
     <string name="settings_session_max">Session max (swipes)</string>
     <string name="settings_rest_min">Pause longue min (min)</string>
     <string name="settings_rest_max">Pause longue max (min)</string>
+    <string name="settings_distraction">Distractions : %1$d %% des swipes</string>
+    <string name="settings_distraction_hint">Une distraction remplace le délai entre deux swipes par une pause plus longue, comme si vous leviez les yeux du téléphone. 0 % = jamais.</string>
+    <string name="settings_distraction_min">Distraction min (s)</string>
+    <string name="settings_distraction_max">Distraction max (s)</string>
     <string name="settings_daily_cap">Plafond quotidien (swipes)</string>
     <string name="settings_active_start">Début de plage (HH:mm)</string>
     <string name="settings_active_end">Fin de plage (HH:mm)</string>
@@ -82,6 +86,8 @@
     <string name="settings_error_rest">Nombre entier de minutes entre 1 et 1440</string>
     <string name="settings_error_cap">Nombre entier entre 1 et 10000</string>
     <string name="settings_error_time">Heure invalide (ex. 09:00)</string>
+    <string name="settings_error_distraction">Entre 0 et 20 %</string>
+    <string name="settings_error_distraction_seconds">Nombre entier de secondes entre 1 et 300</string>
     <string name="settings_error_profile_open">Entre 0 et 30 %</string>
     <string name="settings_profile_title">Ouverture de profil</string>
     <string name="settings_profile_open">Ouvrir un profil avant de swiper : %1$d %%</string>

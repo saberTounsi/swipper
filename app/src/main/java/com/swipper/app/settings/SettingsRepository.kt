@@ -79,6 +79,9 @@ class SettingsRepository internal constructor(
             p[ACTIVE_END] = settings.activeEndMinute
             p[TARGETS] = settings.allowedPackages
             p[PROFILE_OPEN] = settings.profileOpenPercent
+            p[DISTRACTION] = settings.distractionPercent
+            p[DISTRACTION_MIN] = settings.distractionMinSeconds
+            p[DISTRACTION_MAX] = settings.distractionMaxSeconds
         }
     }
 
@@ -180,6 +183,9 @@ class SettingsRepository internal constructor(
             activeEndMinute = p[ACTIVE_END] ?: d.activeEndMinute,
             targetPackages = p[TARGETS] ?: d.targetPackages,
             profileOpenPercent = p[PROFILE_OPEN] ?: d.profileOpenPercent,
+            distractionPercent = p[DISTRACTION] ?: d.distractionPercent,
+            distractionMinSeconds = p[DISTRACTION_MIN] ?: d.distractionMinSeconds,
+            distractionMaxSeconds = p[DISTRACTION_MAX] ?: d.distractionMaxSeconds,
             profilePoints = readProfilePoints(p),
         ).orDefaults()
     }
@@ -221,6 +227,9 @@ class SettingsRepository internal constructor(
         private val ACTIVE_END = intPreferencesKey("active_end_minute")
         private val TARGETS = stringSetPreferencesKey("target_packages")
         private val PROFILE_OPEN = intPreferencesKey("profile_open_percent")
+        private val DISTRACTION = intPreferencesKey("distraction_percent")
+        private val DISTRACTION_MIN = intPreferencesKey("distraction_min_seconds")
+        private val DISTRACTION_MAX = intPreferencesKey("distraction_max_seconds")
 
         private fun profileXKey(pkg: String) = floatPreferencesKey("profile_x_$pkg")
         private fun profileYKey(pkg: String) = floatPreferencesKey("profile_y_$pkg")
