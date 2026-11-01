@@ -31,11 +31,11 @@ class GestureGenerator(private val random: Random) {
      * [zone] (fractions de [screen]).
      *
      * @throws IllegalArgumentException si la zone a xMin > [RIGHT_START_MAX] ou
-     *   xMax < [LEFT_START_MIN] : un des deux sens ne pourrait pas garantir le
-     *   trajet minimal de [MIN_TRAVEL].
+     *   xMax < [LEFT_START_MIN] : un des deux sens ne pourrait pas partir du côté
+     *   opposé à son arrivée.
      */
     fun plan(screen: ScreenSize, zone: SwipeZone, direction: Direction): SwipePlan {
-        // Tolérance : les bornes Float (0,62f = 0,6200000048…) doivent passer à la limite exacte.
+        // Tolérance : les bornes Float (0,65f = 0,6499999762…) doivent passer à la limite exacte.
         require(zone.xMin <= RIGHT_START_MAX + LIMIT_EPS) {
             "xMin de la zone (${zone.xMin}) doit être ≤ $RIGHT_START_MAX pour garantir le trajet vers la droite"
         }
@@ -47,8 +47,9 @@ class GestureGenerator(private val random: Random) {
         val maxX = max(0.0, w - 1)
         val maxY = max(0.0, h - 1)
 
-        // 1. Départ : dans la zone ∩ [0 ; RIGHT_START_MAX] (RIGHT) ou ∩ [LEFT_START_MIN ; 1]
-        // (LEFT), pour garantir le trajet ; biais vers la droite (u^0,8 a une moyenne > 0,5).
+        // 1. Départ du côté opposé à l'arrivée : zone ∩ [0 ; RIGHT_START_MAX] (RIGHT, à gauche)
+        // ou ∩ [LEFT_START_MIN ; 1] (LEFT, à droite) ; le doigt traverse la carte, un swipe
+        // parti du centre passait parfois mal. Biais vers la droite (u^0,8 a une moyenne > 0,5).
         val (xLo, xHi) = when (direction) {
             Direction.RIGHT -> min(zone.xMin.toDouble(), RIGHT_START_MAX) to min(zone.xMax.toDouble(), RIGHT_START_MAX)
             Direction.LEFT -> max(zone.xMin.toDouble(), LEFT_START_MIN) to max(zone.xMax.toDouble(), LEFT_START_MIN)
@@ -264,10 +265,11 @@ class GestureGenerator(private val random: Random) {
 
         /**
          * Départ maximal d'un swipe RIGHT et minimal d'un swipe LEFT (fractions de la
-         * largeur) : dérivés des bandes pour garantir le trajet de [MIN_TRAVEL].
+         * largeur) : un swipe vers la droite part du tiers gauche, un swipe vers la gauche
+         * du tiers droit. Trajet ≥ 0,45 de la largeur, donc toujours ≥ [MIN_TRAVEL].
          */
-        const val RIGHT_START_MAX = RIGHT_BAND_MAX - MIN_TRAVEL
-        const val LEFT_START_MIN = LEFT_BAND_MIN + MIN_TRAVEL
+        const val RIGHT_START_MAX = 0.35
+        const val LEFT_START_MIN = 0.65
 
         /** Tolérance d'arrondi Float sur les limites de la zone. */
         const val LIMIT_EPS = 1e-6

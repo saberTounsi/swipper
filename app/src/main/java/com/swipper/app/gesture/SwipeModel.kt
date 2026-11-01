@@ -62,7 +62,11 @@ data class SwipeZone(val xMin: Float, val xMax: Float, val yMin: Float, val yMax
     }
 
     companion object {
-        /** Zone par défaut : x ∈ [0,35 ; 0,65], y ∈ [0,45 ; 0,65]. */
-        val DEFAULT = SwipeZone(xMin = 0.35f, xMax = 0.65f, yMin = 0.45f, yMax = 0.65f)
+        /**
+         * Zone par défaut : x ∈ [0,15 ; 0,85], y ∈ [0,45 ; 0,65]. Le générateur n'en garde
+         * que le côté opposé à l'arrivée ([0,15 ; 0,35] vers la droite, [0,65 ; 0,85] vers
+         * la gauche) ; 0,15 reste loin du bord, où Android prend le geste pour un Retour.
+         */
+        val DEFAULT = SwipeZone(xMin = 0.15f, xMax = 0.85f, yMin = 0.45f, yMax = 0.65f)
     }
 }

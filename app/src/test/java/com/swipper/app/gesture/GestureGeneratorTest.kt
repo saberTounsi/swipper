@@ -293,6 +293,9 @@ class GestureGeneratorTest {
 
     @Test
     fun `depart selon le sens`() {
+        // Vers la droite : départ dans le tiers gauche ; vers la gauche : dans le tiers droit.
+        assertEquals(0.35, RIGHT_START_MAX)
+        assertEquals(0.65, LEFT_START_MIN)
         val w = phone.widthPx.toDouble()
         val right = plans { Direction.RIGHT }.map { it.second }
         val left = plans { Direction.LEFT }.map { it.second }
@@ -403,10 +406,10 @@ class GestureGeneratorTest {
         assertThrows<IllegalArgumentException> { SwipeZone(0.3f, 0.5f, 0.7f, 0.6f) }
         assertThrows<IllegalArgumentException> { SwipeZone(Float.NaN, 0.5f, 0.4f, 0.6f) }
         assertThrows<IllegalArgumentException> { SwipeZone(0.3f, 0.5f, 0.4f, Float.NaN) }
-        // Zone trop à droite (xMin > 0,62) ou trop à gauche (xMax < 0,38) : un des deux
+        // Zone trop à droite (xMin > 0,35) ou trop à gauche (xMax < 0,65) : un des deux
         // sens serait impossible, la zone est refusée quel que soit le sens demandé.
-        val tooRight = SwipeZone(0.70f, 0.90f, 0.4f, 0.6f)
-        val tooLeft = SwipeZone(0.10f, 0.30f, 0.4f, 0.6f)
+        val tooRight = SwipeZone(0.40f, 0.90f, 0.4f, 0.6f)
+        val tooLeft = SwipeZone(0.10f, 0.60f, 0.4f, 0.6f)
         for (dir in Direction.values()) {
             assertThrows<IllegalArgumentException> { gen.plan(phone, tooRight, dir) }
             assertThrows<IllegalArgumentException> { gen.plan(phone, tooLeft, dir) }
@@ -415,11 +418,11 @@ class GestureGeneratorTest {
     }
 
     @Test
-    fun `zones aux limites 0,62 et 0,38`() {
+    fun `zones aux limites 0,35 et 0,65`() {
         val gen = GestureGenerator(Random(5))
         val w = phone.widthPx.toDouble()
-        val atRightLimit = SwipeZone(0.62f, 1f, 0.4f, 0.6f)
-        val atLeftLimit = SwipeZone(0f, 0.38f, 0.4f, 0.6f)
+        val atRightLimit = SwipeZone(0.35f, 1f, 0.4f, 0.6f)
+        val atLeftLimit = SwipeZone(0f, 0.65f, 0.4f, 0.6f)
         for (z in listOf(atRightLimit, atLeftLimit)) {
             for (dir in Direction.values()) {
                 repeat(50) {
@@ -430,8 +433,8 @@ class GestureGeneratorTest {
             }
         }
         for (dir in Direction.values()) {
-            assertThrows<IllegalArgumentException> { gen.plan(phone, SwipeZone(0.63f, 1f, 0.4f, 0.6f), dir) }
-            assertThrows<IllegalArgumentException> { gen.plan(phone, SwipeZone(0f, 0.37f, 0.4f, 0.6f), dir) }
+            assertThrows<IllegalArgumentException> { gen.plan(phone, SwipeZone(0.36f, 1f, 0.4f, 0.6f), dir) }
+            assertThrows<IllegalArgumentException> { gen.plan(phone, SwipeZone(0f, 0.64f, 0.4f, 0.6f), dir) }
         }
     }
 
